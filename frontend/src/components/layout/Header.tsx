@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ChevronDown, LogOut, Moon, Settings, Sun } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore, useUIStore } from '@/store';
+import { useLayoutContext } from './layoutState';
 import { useCurrentUserQuery, useLogoutMutation, useUserUsageQuery } from '@/hooks/queries';
 import { Button, ToggleButton } from '@/components/ui';
 import { cn } from '@/utils/cn';
@@ -297,7 +298,7 @@ export function Header({ onLogout, userName = 'User', isAuthPage = false }: Head
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const setAuthenticated = useAuthStore((state) => state.setAuthenticated);
   const sidebarOpen = useUIStore((state) => state.sidebarOpen);
-  const setSidebarOpen = useUIStore((state) => state.setSidebarOpen);
+  const { handleSidebarToggle } = useLayoutContext();
 
   const { data: user } = useCurrentUserQuery({
     enabled: isAuthenticated && !isAuthPage,
@@ -335,7 +336,7 @@ export function Header({ onLogout, userName = 'User', isAuthPage = false }: Head
           {isAuthenticated && !isAuthPage && (
             <ToggleButton
               isOpen={sidebarOpen}
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={() => handleSidebarToggle(!sidebarOpen)}
               position="left"
               className="mr-1"
             />

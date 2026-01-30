@@ -283,7 +283,7 @@ export const Input = memo(function Input({
   const shouldShowAttachedPreview = showAttachedFilesPreview && showPreview && hasAttachments;
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="relative px-4 sm:px-6">
+    <form ref={formRef} onSubmit={handleSubmit} className="relative px-2 sm:px-4 md:px-6">
       <div
         {...dragHandlers}
         className={`relative rounded-2xl border bg-surface-tertiary transition-all duration-300 dark:bg-surface-dark-tertiary ${
@@ -311,7 +311,7 @@ export const Input = memo(function Input({
           </div>
         )}
 
-        <div className="relative px-3 pb-12 pt-1.5 sm:pb-9">
+        <div className="relative px-2 pb-12 pt-1.5 md:px-3 md:pb-9">
           <Textarea
             ref={textareaRef}
             message={message}
@@ -351,7 +351,7 @@ export const Input = memo(function Input({
               hasMessage={hasMessage}
             />
 
-            <div className="absolute bottom-2.5 right-3">
+            <div className="absolute bottom-2.5 right-2 md:right-3">
               <SendButton
                 isLoading={isLoading}
                 isStreaming={isStreaming}

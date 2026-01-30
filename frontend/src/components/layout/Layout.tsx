@@ -3,18 +3,21 @@ import { Header, type HeaderProps } from './Header';
 import { cn } from '@/utils/cn';
 import { LayoutContext, type LayoutContextValue } from './layoutState';
 import { useUIStore } from '@/store';
-import { useSwipeGesture, useIsMobile } from '@/hooks';
+import { useSwipeGesture, useIsMobile, useAutoCollapseSidebar } from '@/hooks';
 
-function MobileSidebarOverlay() {
+interface MobileSidebarOverlayProps {
+  onClose: () => void;
+}
+
+function MobileSidebarOverlay({ onClose }: MobileSidebarOverlayProps) {
   const sidebarOpen = useUIStore((state) => state.sidebarOpen);
-  const setSidebarOpen = useUIStore((state) => state.setSidebarOpen);
 
   if (!sidebarOpen) return null;
 
   return (
     <div
       className="fixed inset-0 z-30 bg-black/50 md:hidden"
-      onClick={() => setSidebarOpen(false)}
+      onClick={onClose}
       aria-hidden="true"
     />
   );
@@ -38,12 +41,12 @@ export function Layout({
 }: LayoutProps) {
   const [sidebarContent, setSidebarContent] = useState<ReactNode | null>(null);
   const sidebarOpen = useUIStore((state) => state.sidebarOpen);
-  const setSidebarOpen = useUIStore((state) => state.setSidebarOpen);
   const isMobile = useIsMobile();
+  const { handleManualToggle } = useAutoCollapseSidebar();
 
   useSwipeGesture({
-    onSwipeRight: () => setSidebarOpen(true),
-    onSwipeLeft: () => sidebarOpen && setSidebarOpen(false),
+    onSwipeRight: () => handleManualToggle(true),
+    onSwipeLeft: () => sidebarOpen && handleManualToggle(false),
     enabled: isMobile && !!sidebarContent,
   });
 
@@ -55,8 +58,9 @@ export function Layout({
     () => ({
       sidebar: sidebarContent,
       setSidebar,
+      handleSidebarToggle: handleManualToggle,
     }),
-    [setSidebar, sidebarContent],
+    [setSidebar, sidebarContent, handleManualToggle],
   );
 
   return (
@@ -65,7 +69,7 @@ export function Layout({
         {showHeader && <Header onLogout={onLogout} userName={userName} isAuthPage={isAuthPage} />}
 
         <div className="flex min-h-0 flex-1">
-          {sidebarContent && <MobileSidebarOverlay />}
+          {sidebarContent && <MobileSidebarOverlay onClose={() => handleManualToggle(false)} />}
 
           {sidebarContent ? (
             <div className="relative h-full flex-shrink-0">{sidebarContent}</div>

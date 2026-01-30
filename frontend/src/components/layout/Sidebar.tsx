@@ -10,6 +10,7 @@ import { useDeleteChatMutation, useUpdateChatMutation, usePinChatMutation } from
 import { cn } from '@/utils/cn';
 import { useUIStore, useStreamStore } from '@/store';
 import { useIsMobile } from '@/hooks';
+import { useLayoutContext } from './layoutState';
 import { SidebarChatItem } from './SidebarChatItem';
 import { ChatDropdown } from './ChatDropdown';
 import { DROPDOWN_WIDTH, DROPDOWN_HEIGHT, DROPDOWN_MARGIN } from '@/config/constants';
@@ -74,8 +75,8 @@ export function Sidebar({
 }: SidebarProps) {
   const navigate = useNavigate();
   const sidebarOpen = useUIStore((state) => state.sidebarOpen);
-  const setSidebarOpen = useUIStore((state) => state.setSidebarOpen);
   const isMobile = useIsMobile();
+  const { handleSidebarToggle } = useLayoutContext();
   const activeStreamMetadata = useStreamStore((state) => state.activeStreamMetadata);
   const streamingChatIds = useMemo(
     () => activeStreamMetadata.map((meta) => meta.chatId),
@@ -160,10 +161,10 @@ export function Sidebar({
       onChatSelect(chatId);
       setHoveredChatId(null);
       if (isMobile) {
-        setSidebarOpen(false);
+        handleSidebarToggle(false);
       }
     },
-    [onChatSelect, isMobile, setSidebarOpen],
+    [onChatSelect, isMobile, handleSidebarToggle],
   );
 
   const handleDeleteChat = useCallback((chatId: string) => {
@@ -203,7 +204,7 @@ export function Sidebar({
   const handleNewChat = () => {
     navigate('/');
     if (isMobile) {
-      setSidebarOpen(false);
+      handleSidebarToggle(false);
     }
   };
 

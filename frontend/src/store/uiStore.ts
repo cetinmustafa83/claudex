@@ -17,7 +17,10 @@ type UIStoreState = ThemeState &
   Pick<UIState, 'sidebarOpen'> &
   Pick<UIActions, 'setSidebarOpen'> &
   SplitViewState &
-  SplitViewActions;
+  SplitViewActions & {
+    sidebarAutoCollapsed: boolean;
+    setSidebarAutoCollapsed: (isAutoCollapsed: boolean) => void;
+  };
 
 const getInitialSidebarState = (): boolean => {
   if (typeof window === 'undefined') return false;
@@ -38,6 +41,8 @@ export const useUIStore = create<UIStoreState>()(
       setThinkingMode: (mode) => set({ thinkingMode: mode }),
       sidebarOpen: getInitialSidebarState(),
       setSidebarOpen: (isOpen) => set({ sidebarOpen: isOpen }),
+      sidebarAutoCollapsed: false,
+      setSidebarAutoCollapsed: (isAutoCollapsed) => set({ sidebarAutoCollapsed: isAutoCollapsed }),
 
       isSplitMode: false,
       currentView: 'agent',
@@ -82,6 +87,7 @@ export const useUIStore = create<UIStoreState>()(
         secondaryView: state.secondaryView,
         isSplitMode: state.isSplitMode,
         sidebarOpen: state.sidebarOpen,
+        sidebarAutoCollapsed: state.sidebarAutoCollapsed,
       }),
       merge: (persisted, current) => ({
         ...current,

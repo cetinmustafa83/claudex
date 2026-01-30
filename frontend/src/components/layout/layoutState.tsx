@@ -3,6 +3,7 @@ import { ReactNode, createContext, useContext, useEffect } from 'react';
 export interface LayoutContextValue {
   sidebar: ReactNode | null;
   setSidebar: (content: ReactNode | null) => void;
+  handleSidebarToggle: (isOpen: boolean) => void;
 }
 
 export const LayoutContext = createContext<LayoutContextValue | undefined>(undefined);

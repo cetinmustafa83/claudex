@@ -120,10 +120,10 @@ function DropdownInner<T>({
 
   const showIconOnly = compactOnMobile && LeftIcon;
   const labelClasses = showIconOnly
-    ? 'hidden sm:inline whitespace-nowrap text-xs font-medium text-text-primary dark:text-text-dark-secondary'
+    ? 'hidden md:inline whitespace-nowrap text-xs font-medium text-text-primary dark:text-text-dark-secondary'
     : 'whitespace-nowrap text-xs font-medium text-text-primary dark:text-text-dark-secondary';
   const chevronClasses = showIconOnly
-    ? 'hidden sm:block h-3.5 w-3.5 flex-shrink-0 text-text-quaternary'
+    ? 'hidden md:block h-3.5 w-3.5 flex-shrink-0 text-text-quaternary'
     : 'h-3.5 w-3.5 flex-shrink-0 text-text-quaternary';
 
   return (

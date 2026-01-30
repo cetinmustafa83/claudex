@@ -1,4 +1,5 @@
 export * from './queries';
+export * from './useAutoCollapseSidebar';
 export * from './useChatContext';
 export * from './useChatData';
 export * from './useChatStreaming';

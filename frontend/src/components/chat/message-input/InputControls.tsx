@@ -27,7 +27,7 @@ export function InputControls({
 }: InputControlsProps) {
   return (
     <div
-      className="absolute bottom-2.5 left-3 right-14 flex flex-wrap items-center gap-1.5 sm:gap-2"
+      className="absolute bottom-2.5 left-2 right-12 flex flex-wrap items-center gap-1 md:left-3 md:right-14 md:gap-2"
       onClick={(e) => e.preventDefault()}
     >
       {onAttach && <AttachButton onAttach={onAttach} />}
