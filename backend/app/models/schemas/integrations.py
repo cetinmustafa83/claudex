@@ -42,3 +42,15 @@ class DeviceCodePollResponse(BaseModel):
 
 class OpenAIStatusResponse(BaseModel):
     connected: bool
+
+
+class CopilotDeviceCodeResponse(BaseModel):
+    user_code: str
+    verification_uri: str
+    device_code: str
+    interval: int
+    expires_in: int
+
+
+class CopilotStatusResponse(BaseModel):
+    connected: bool

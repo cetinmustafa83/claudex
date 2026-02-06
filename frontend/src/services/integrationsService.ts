@@ -103,6 +103,46 @@ async function disconnectOpenAI(): Promise<OAuthClientResponse> {
   });
 }
 
+export interface CopilotDeviceCodeResponse {
+  user_code: string;
+  verification_uri: string;
+  device_code: string;
+  interval: number;
+  expires_in: number;
+}
+
+export interface CopilotStatus {
+  connected: boolean;
+}
+
+async function requestCopilotDeviceCode(): Promise<CopilotDeviceCodeResponse> {
+  return withAuth(async () => {
+    const response = await apiClient.post<CopilotDeviceCodeResponse>('/integrations/copilot/device-code');
+    return ensureResponse(response, 'Failed to request device code');
+  });
+}
+
+async function pollCopilotToken(): Promise<DeviceCodePollResponse> {
+  return withAuth(async () => {
+    const response = await apiClient.post<DeviceCodePollResponse>('/integrations/copilot/poll-token');
+    return ensureResponse(response, 'Failed to poll for token');
+  });
+}
+
+async function getCopilotStatus(): Promise<CopilotStatus> {
+  return withAuth(async () => {
+    const response = await apiClient.get<CopilotStatus>('/integrations/copilot/status');
+    return ensureResponse(response, 'Failed to get Copilot status');
+  });
+}
+
+async function disconnectCopilot(): Promise<OAuthClientResponse> {
+  return withAuth(async () => {
+    const response = await apiClient.post<OAuthClientResponse>('/integrations/copilot/disconnect');
+    return ensureResponse(response, 'Failed to disconnect Copilot');
+  });
+}
+
 export const integrationsService = {
   uploadGmailOAuthClient,
   deleteGmailOAuthClient,
@@ -113,4 +153,8 @@ export const integrationsService = {
   pollOpenAIToken,
   getOpenAIStatus,
   disconnectOpenAI,
+  requestCopilotDeviceCode,
+  pollCopilotToken,
+  getCopilotStatus,
+  disconnectCopilot,
 };

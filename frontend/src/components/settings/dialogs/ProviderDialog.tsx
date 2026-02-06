@@ -181,6 +181,7 @@ export const ProviderDialog: React.FC<ProviderDialogProps> = ({
   const [selectedProviderType, setSelectedProviderType] = useState<ProviderType>('anthropic');
   const [localError, setLocalError] = useState<string | null>(null);
   const [openAIAuthDone, setOpenAIAuthDone] = useState(false);
+  const [copilotAuthDone, setCopilotAuthDone] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -194,6 +195,7 @@ export const ProviderDialog: React.FC<ProviderDialogProps> = ({
       setLocalError(null);
       setShowToken(false);
       setOpenAIAuthDone(false);
+      setCopilotAuthDone(false);
     }
   }, [isOpen, provider]);
 
@@ -358,13 +360,26 @@ export const ProviderDialog: React.FC<ProviderDialogProps> = ({
               <Label className="mb-1.5 text-sm text-text-primary dark:text-text-dark-primary">
                 GitHub Copilot Authentication
               </Label>
-              <CopilotAuthButton
-                value={form.auth_token || null}
-                onChange={(token) => {
-                  setForm((prev) => ({ ...prev, auth_token: token || '' }));
-                  setLocalError(null);
-                }}
-              />
+              <p className="mb-2 text-xs text-text-tertiary dark:text-text-dark-tertiary">
+                Sign in with your GitHub account to authenticate.
+              </p>
+              {isEditing ? (
+                <CopilotAuthButton
+                  connected={copilotAuthDone || !!form.auth_token}
+                  onConnected={() => {
+                    setCopilotAuthDone(true);
+                    setLocalError(null);
+                  }}
+                  onDisconnected={() => {
+                    setCopilotAuthDone(false);
+                    setForm((prev) => ({ ...prev, auth_token: '' }));
+                  }}
+                />
+              ) : (
+                <p className="text-xs text-text-tertiary dark:text-text-dark-tertiary">
+                  Save the provider first, then authenticate with GitHub.
+                </p>
+              )}
             </div>
           ) : (
             <div>
