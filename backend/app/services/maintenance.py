@@ -7,9 +7,16 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.config import get_settings
+from app.services.claude_session_registry import (
+    REAPER_INTERVAL_SECONDS,
+    session_registry,
+)
 from app.services.refresh_token import RefreshTokenService
 from app.services.sandbox import SandboxService
 from app.services.scheduler import SchedulerService
+
+settings = get_settings()
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +39,7 @@ class MaintenanceService:
             asyncio.create_task(self._run_job_loop(self._scheduled_tasks_job())),
             asyncio.create_task(self._run_job_loop(self._refresh_tokens_job())),
             asyncio.create_task(self._run_job_loop(self._orphaned_sandboxes_job())),
+            asyncio.create_task(self._run_job_loop(self._session_reaper_job())),
         ]
 
     async def stop(self) -> None:
@@ -65,8 +73,20 @@ class MaintenanceService:
             run=SandboxService.cleanup_orphaned_sandboxes,
         )
 
+    def _session_reaper_job(self) -> MaintenanceJob:
+        return MaintenanceJob(
+            name="chat_session_reaper",
+            interval_seconds=REAPER_INTERVAL_SECONDS,
+            run=self._reap_idle_sessions,
+        )
+
     async def _run_scheduled_tasks(self) -> dict[str, Any]:
         return await self._scheduler_service.check_due_tasks(limit=100)
+
+    @staticmethod
+    async def _reap_idle_sessions() -> dict[str, Any]:
+        await session_registry.reap_idle(settings.CHAT_PROCESS_IDLE_TTL_SECONDS)
+        return {}
 
     async def _run_job_loop(self, job: MaintenanceJob) -> None:
         while not self._stop_event.is_set():

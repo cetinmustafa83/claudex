@@ -2,7 +2,6 @@ import asyncio
 import logging
 import select
 import socket
-from collections.abc import AsyncIterable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from typing import Any
@@ -23,10 +22,9 @@ class DockerSandboxTransport(BaseSandboxTransport):
         *,
         sandbox_id: str,
         docker_config: DockerConfig,
-        prompt: str | AsyncIterable[dict[str, Any]],
         options: ClaudeAgentOptions,
     ) -> None:
-        super().__init__(sandbox_id=sandbox_id, prompt=prompt, options=options)
+        super().__init__(sandbox_id=sandbox_id, options=options)
         self._docker_config = docker_config
         self._executor = ThreadPoolExecutor(max_workers=4)
         self._docker_client: Any = None

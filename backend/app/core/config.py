@@ -181,6 +181,7 @@ class Settings(BaseSettings):
     CONTEXT_USAGE_CACHE_TTL_SECONDS: int = 600
     CONTEXT_USAGE_POLL_INTERVAL_SECONDS: float = 5.0
     CANCEL_PENDING_TTL_SECONDS: float = 10.0
+    CHAT_PROCESS_IDLE_TTL_SECONDS: float = 300.0
 
     # GitHub Copilot OAuth (default ID from https://github.com/anomalyco/opencode)
     GITHUB_CLIENT_ID: str = "Ov23li8tweQw6odWQebz"

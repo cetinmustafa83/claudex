@@ -168,12 +168,10 @@ async def enhance_prompt(
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
     try:
-        async with ClaudeAgentService(
-            session_factory=chat_service.session_factory
-        ) as ai_service:
-            enhanced_prompt = await ai_service.enhance_prompt(
-                prompt, model_id, current_user
-            )
+        ai_service = ClaudeAgentService(session_factory=chat_service.session_factory)
+        enhanced_prompt = await ai_service.enhance_prompt(
+            prompt, model_id, current_user
+        )
         return {"enhanced_prompt": enhanced_prompt}
     except ClaudeAgentException as e:
         raise HTTPException(

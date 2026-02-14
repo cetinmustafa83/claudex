@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterable
 from contextlib import suppress
 from typing import Any
 
@@ -22,10 +21,9 @@ class E2BSandboxTransport(BaseSandboxTransport):
         *,
         sandbox_id: str,
         api_key: str,
-        prompt: str | AsyncIterable[dict[str, Any]],
         options: ClaudeAgentOptions,
     ) -> None:
-        super().__init__(sandbox_id=sandbox_id, prompt=prompt, options=options)
+        super().__init__(sandbox_id=sandbox_id, options=options)
         self._api_key = api_key
         self._sandbox: AsyncSandbox | None = None
         self._command: AsyncCommandHandle | None = None

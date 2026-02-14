@@ -46,6 +46,7 @@ from app.services.sandbox_providers import (
 )
 from app.services.streaming.runtime import ChatStreamRuntime
 from app.services.streaming.types import ChatStreamRequest
+from app.services.claude_session_registry import session_registry
 from app.services.storage import StorageService
 from app.services.user import UserService
 
@@ -269,6 +270,8 @@ class ChatService(BaseDbService[Chat]):
 
             await db.commit()
 
+            await session_registry.terminate(str(chat_id))
+
             if chat.sandbox_id:
                 asyncio.create_task(
                     self.sandbox_service.delete_sandbox(chat.sandbox_id)
@@ -300,13 +303,14 @@ class ChatService(BaseDbService[Chat]):
 
     async def delete_all_chats(self, user: User) -> int:
         async with self.session_factory() as db:
-            sandbox_query = select(Chat.sandbox_id).filter(
+            chat_query = select(Chat.id, Chat.sandbox_id).filter(
                 Chat.user_id == user.id,
-                Chat.sandbox_id.isnot(None),
                 Chat.deleted_at.is_(None),
             )
-            result = await db.execute(sandbox_query)
-            sandbox_ids = [row[0] for row in result.fetchall()]
+            result = await db.execute(chat_query)
+            rows = result.fetchall()
+            chat_ids = [str(row[0]) for row in rows]
+            sandbox_ids = [row[1] for row in rows if row[1] is not None]
 
             now = datetime.now(timezone.utc)
 
@@ -330,6 +334,11 @@ class ChatService(BaseDbService[Chat]):
             await db.execute(messages_update)
 
             await db.commit()
+
+            await asyncio.gather(
+                *(session_registry.terminate(cid) for cid in chat_ids),
+                return_exceptions=True,
+            )
 
             for sandbox_id in sandbox_ids:
                 asyncio.create_task(self.sandbox_service.delete_sandbox(sandbox_id))

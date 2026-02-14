@@ -3,7 +3,7 @@ import json
 import re
 import shlex
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import asdict
 from types import TracebackType
@@ -26,11 +26,9 @@ class BaseSandboxTransport(Transport, ABC):
         self,
         *,
         sandbox_id: str,
-        prompt: str | AsyncIterable[dict[str, Any]],
         options: ClaudeAgentOptions,
     ) -> None:
         self._sandbox_id = sandbox_id
-        self._prompt = prompt
         self._options = options
         self._max_buffer_size = (
             options.max_buffer_size
@@ -295,7 +293,6 @@ class BaseSandboxTransport(Transport, ABC):
 
         json_buffer = ""
         json_started = False
-        should_stop = False
 
         while True:
             chunk = await self._stdout_queue.get()
@@ -343,14 +340,8 @@ class BaseSandboxTransport(Transport, ABC):
                         yield data
                         if isinstance(data, dict) and data.get("type") == "result":
                             json_buffer = ""
-                            should_stop = True
-                            break
                     if not json_buffer:
                         json_started = False
-                if should_stop:
-                    break
-            if should_stop:
-                break
 
         if json_buffer:
             leftover, parsed_messages = self._parse_json_buffer(json_buffer)

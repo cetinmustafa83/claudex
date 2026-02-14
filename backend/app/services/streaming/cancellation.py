@@ -3,12 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING
 
 from app.core.config import get_settings
-
-if TYPE_CHECKING:
-    from app.services.claude_agent import ClaudeAgentService
+from app.services.claude_session_registry import session_registry
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -69,8 +66,8 @@ class CancellationHandler:
         return True
 
     @staticmethod
-    async def cancel_stream(chat_id: str, ai_service: ClaudeAgentService) -> None:
+    async def cancel_stream(chat_id: str) -> None:
         try:
-            await ai_service.cancel_active_stream()
+            await session_registry.interrupt_generation(chat_id)
         except Exception as exc:
             logger.error("Failed to cancel active stream for chat %s: %s", chat_id, exc)

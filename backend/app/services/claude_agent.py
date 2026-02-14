@@ -1,8 +1,8 @@
 import logging
 import re
 from collections.abc import AsyncIterator, Callable
-from types import TracebackType
-from typing import Any, Literal, Self
+from functools import partial
+from typing import Any, Literal, NamedTuple
 
 from claude_agent_sdk import (
     ClaudeAgentOptions,
@@ -27,6 +27,7 @@ from app.services.transports import (
     E2BSandboxTransport,
     HostSandboxTransport,
     ModalSandboxTransport,
+    SandboxTransport,
 )
 from app.services.streaming.types import StreamEvent
 from app.services.streaming.processor import StreamProcessor
@@ -37,6 +38,14 @@ SDKPermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+
+class SessionParams(NamedTuple):
+    options: ClaudeAgentOptions
+    sandbox_id: str
+    sandbox_provider: str
+    transport_factory: Callable[[], SandboxTransport]
+
 
 THINKING_MODE_TOKENS = {
     "low": 4000,
@@ -96,40 +105,12 @@ class ClaudeAgentService:
         self.tool_registry = ToolHandlerRegistry()
         self.session_factory = session_factory or SessionLocal
         self._total_cost_usd = 0.0
-        self._active_transport: (
-            E2BSandboxTransport
-            | DockerSandboxTransport
-            | HostSandboxTransport
-            | ModalSandboxTransport
-            | None
-        ) = None
         self._provider_service = ProviderService()
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        _exc_val: BaseException | None,
-        _exc_tb: TracebackType | None,
-    ) -> bool:
-        try:
-            await self.cancel_active_stream()
-        except Exception as cleanup_error:
-            logger.error(
-                f"Error during ClaudeAgentService cleanup: {cleanup_error}",
-                exc_info=True,
-            )
-            if exc_type is None:
-                raise
-        return False
 
     def _create_sandbox_transport(
         self,
         sandbox_provider: str,
         sandbox_id: str,
-        prompt_iterable: AsyncIterator[dict[str, Any]],
         options: ClaudeAgentOptions,
         user_settings: UserSettings,
     ) -> (
@@ -147,14 +128,12 @@ class ClaudeAgentService:
             return DockerSandboxTransport(
                 sandbox_id=sandbox_id,
                 docker_config=docker_config,
-                prompt=prompt_iterable,
                 options=options,
             )
 
         if sandbox_provider == SandboxProviderType.HOST.value:
             return HostSandboxTransport(
                 sandbox_id=sandbox_id,
-                prompt=prompt_iterable,
                 options=options,
             )
 
@@ -167,7 +146,6 @@ class ClaudeAgentService:
             return ModalSandboxTransport(
                 sandbox_id=sandbox_id,
                 api_key=user_settings.modal_api_key,
-                prompt=prompt_iterable,
                 options=options,
             )
 
@@ -179,33 +157,34 @@ class ClaudeAgentService:
         return E2BSandboxTransport(
             sandbox_id=sandbox_id,
             api_key=user_settings.e2b_api_key,
-            prompt=prompt_iterable,
             options=options,
         )
 
-    async def get_ai_stream(
+    async def build_session_params(
         self,
-        prompt: str,
-        system_prompt: str,
-        custom_instructions: str | None,
+        *,
         user: User,
         chat: Chat,
+        system_prompt: str,
+        custom_instructions: str | None,
         model_id: str,
-        permission_mode: str = "auto",
-        session_id: str | None = None,
-        session_callback: Callable[[str], None] | None = None,
-        thinking_mode: str | None = None,
-        attachments: list[dict[str, Any]] | None = None,
-        is_custom_prompt: bool = False,
-    ) -> AsyncIterator[StreamEvent]:
+        permission_mode: str,
+        session_id: str | None,
+        thinking_mode: str | None,
+        is_custom_prompt: bool,
+    ) -> SessionParams:
         chat_id = str(chat.id)
         user_settings = await UserService(
             session_factory=self.session_factory
         ).get_user_settings(user.id)
 
-        self._total_cost_usd = 0.0
-
         sandbox_provider = user_settings.sandbox_provider
+        sandbox_id = chat.sandbox_id
+        if not sandbox_id:
+            raise ClaudeAgentException(
+                "Chat does not have an associated sandbox environment"
+            )
+        sandbox_id_str = str(sandbox_id)
 
         options = await self._build_claude_options(
             user=user,
@@ -219,13 +198,32 @@ class ClaudeAgentService:
             is_custom_prompt=is_custom_prompt,
         )
 
+        transport_factory = partial(
+            self._create_sandbox_transport,
+            sandbox_provider=sandbox_provider,
+            sandbox_id=sandbox_id_str,
+            options=options,
+            user_settings=user_settings,
+        )
+
+        return SessionParams(
+            options=options,
+            sandbox_id=sandbox_id_str,
+            sandbox_provider=sandbox_provider,
+            transport_factory=transport_factory,
+        )
+
+    async def stream_with_client(
+        self,
+        client: ClaudeSDKClient,
+        prompt: str,
+        custom_instructions: str | None,
+        session_id: str | None,
+        session_callback: Callable[[str], None] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        self._total_cost_usd = 0.0
         user_prompt = self.prepare_user_prompt(prompt, custom_instructions, attachments)
-        sandbox_id = chat.sandbox_id
-        if not sandbox_id:
-            raise ClaudeAgentException(
-                "Chat does not have an associated sandbox environment"
-            )
-        sandbox_id_str = str(sandbox_id)
 
         prompt_message = {
             "type": "user",
@@ -235,41 +233,24 @@ class ClaudeAgentService:
         }
         prompt_iterable = self._create_prompt_iterable(prompt_message)
 
-        transport = self._create_sandbox_transport(
-            sandbox_provider=sandbox_provider,
-            sandbox_id=sandbox_id_str,
-            prompt_iterable=prompt_iterable,
-            options=options,
-            user_settings=user_settings,
+        processor = StreamProcessor(
+            tool_registry=self.tool_registry,
+            session_handler=self._create_session_handler(session_callback),
         )
 
-        async with transport:
-            self._active_transport = transport
+        try:
+            await client.query(prompt_iterable)
+            async for message in client.receive_response():
+                for event in processor.emit_events_for_message(message):
+                    if event:
+                        yield event
+                        if event.get("tool", {}).get("name") == "ExitPlanMode":
+                            await client.set_permission_mode("auto")
 
-            processor = StreamProcessor(
-                tool_registry=self.tool_registry,
-                session_handler=self._create_session_handler(session_callback),
-            )
+            self._total_cost_usd = processor.total_cost_usd
 
-            try:
-                async with ClaudeSDKClient(
-                    options=options, transport=transport
-                ) as client:
-                    await client.query(prompt_iterable)
-                    async for message in client.receive_response():
-                        for event in processor.emit_events_for_message(message):
-                            if event:
-                                yield event
-                                if event.get("tool", {}).get("name") == "ExitPlanMode":
-                                    await client.set_permission_mode("auto")
-
-                self._total_cost_usd = processor.total_cost_usd
-
-            except ClaudeSDKError as e:
-                raise ClaudeAgentException(f"Claude SDK error: {str(e)}")
-
-            finally:
-                self._active_transport = None
+        except ClaudeSDKError as e:
+            raise ClaudeAgentException(f"Claude SDK error: {str(e)}") from e
 
     def get_total_cost_usd(self) -> float:
         return self._total_cost_usd
@@ -278,15 +259,6 @@ class ClaudeAgentService:
         self, session_callback: Callable[[str], None] | None
     ) -> SessionHandler:
         return SessionHandler(session_callback)
-
-    async def cancel_active_stream(self) -> None:
-        if self._active_transport:
-            try:
-                await self._active_transport.close()
-            except Exception as e:
-                logger.error("Error closing transport: %s", e)
-            finally:
-                self._active_transport = None
 
     def _build_auth_env(
         self, model_id: str, user_settings: UserSettings
@@ -622,30 +594,24 @@ class ClaudeAgentService:
             transport = self._create_sandbox_transport(
                 sandbox_provider=user_settings.sandbox_provider,
                 sandbox_id=sandbox_id,
-                prompt_iterable=prompt_iterable,
                 options=options,
                 user_settings=user_settings,
             )
 
             async with transport:
-                self._active_transport = transport
-
                 response_content = ""
-                try:
-                    async with ClaudeSDKClient(
-                        options=options, transport=transport
-                    ) as client:
-                        await client.query(prompt_iterable)
-                        async for message in client.receive_response():
-                            if isinstance(message, UserMessage):
-                                if isinstance(message.content, str):
-                                    response_content += message.content
-                                elif isinstance(message.content, list):
-                                    for item in message.content:
-                                        if isinstance(item, TextBlock) and item.text:
-                                            response_content += item.text
-                finally:
-                    self._active_transport = None
+                async with ClaudeSDKClient(
+                    options=options, transport=transport
+                ) as client:
+                    await client.query(prompt_iterable)
+                    async for message in client.receive_response():
+                        if isinstance(message, UserMessage):
+                            if isinstance(message.content, str):
+                                response_content += message.content
+                            elif isinstance(message.content, list):
+                                for item in message.content:
+                                    if isinstance(item, TextBlock) and item.text:
+                                        response_content += item.text
 
             if not response_content:
                 return None

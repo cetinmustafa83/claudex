@@ -46,6 +46,7 @@
 - Do not define nested/inline functions; use module-level functions for standalone functions (e.g., endpoints) and class methods for classes — if a helper is only used by a class, it must be a method (or static method) on that class, not a module-level function
 - Do not add backward compatibility paths, fallback paths, or legacy shims unless explicitly requested
 - Do not create type aliases that add no semantic value (e.g., `StreamKind = str`) — use the base type directly
+- Module-level constants must be placed at the top of the file, immediately after imports and logger/settings initialization — never between classes or functions
 
 ## Naming Conventions
 

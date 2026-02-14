@@ -31,6 +31,7 @@ from app.core.middleware import (
     setup_middleware,
 )
 from app.db.session import engine, SessionLocal
+from app.services.claude_session_registry import session_registry
 from app.services.maintenance import MaintenanceService
 from app.services.streaming.runtime import ChatStreamRuntime
 from app.utils.redis import redis_connection
@@ -59,6 +60,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await maintenance_service.stop()
         await ChatStreamRuntime.stop_background_chats()
+        await session_registry.terminate_all()
         await engine.dispose()
 
 

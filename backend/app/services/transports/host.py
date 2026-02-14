@@ -4,7 +4,6 @@ import logging
 import os
 import pwd
 import shlex
-from collections.abc import AsyncIterable
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +23,9 @@ class HostSandboxTransport(BaseSandboxTransport):
         self,
         *,
         sandbox_id: str,
-        prompt: str | AsyncIterable[dict[str, Any]],
         options: ClaudeAgentOptions,
     ) -> None:
-        super().__init__(sandbox_id=sandbox_id, prompt=prompt, options=options)
+        super().__init__(sandbox_id=sandbox_id, options=options)
         self._process: asyncio.subprocess.Process | None = None
         self._stdout_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None

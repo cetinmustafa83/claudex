@@ -22,7 +22,8 @@ from app.models.db_models import (
     User,
 )
 from app.prompts.system_prompt import build_system_prompt_for_chat
-from app.services.claude_agent import ClaudeAgentService
+from claude_agent_sdk import CLIConnectionError, CLIJSONDecodeError
+from app.services.claude_agent import ClaudeAgentService, SessionParams
 from app.services.db import SessionFactoryType
 from app.services.exceptions import ClaudeAgentException
 from app.services.message import MessageService
@@ -36,11 +37,19 @@ from app.services.streaming.types import (
     StreamEvent,
     StreamSnapshotAccumulator,
 )
+from app.services.claude_session_registry import session_registry
 from app.services.user import UserService
 from app.utils.redis import redis_connection
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+TRANSPORT_FATAL_TYPES = (
+    CLIConnectionError,
+    CLIJSONDecodeError,
+    ConnectionError,
+    OSError,
+)
 
 SNAPSHOT_EVENT_KINDS = frozenset(
     {
@@ -183,7 +192,7 @@ class ChatStreamRuntime:
                     last_seq=start_seq,
                     active_stream_id=self.stream_id,
                 )
-            await self._consume_stream(ai_service, stream)
+            await self._consume_stream(stream)
 
             if self._cancelled:
                 return await self._complete_stream(
@@ -209,7 +218,6 @@ class ChatStreamRuntime:
 
     async def _consume_stream(
         self,
-        ai_service: ClaudeAgentService,
         stream: AsyncIterator[StreamEvent],
     ) -> None:
         stream_iter = aiter(stream)
@@ -230,7 +238,7 @@ class ChatStreamRuntime:
             self._cancelled = True
 
         if self._cancelled:
-            await CancellationHandler.cancel_stream(self.chat_id, ai_service)
+            await CancellationHandler.cancel_stream(self.chat_id)
 
     @staticmethod
     def _cancel_task_if_running(
@@ -567,6 +575,17 @@ class ChatStreamRuntime:
         for task in finished_tasks:
             cls._background_task_chat_ids.pop(task, None)
 
+    @staticmethod
+    def _is_transport_fatal(exc: BaseException) -> bool:
+        current: BaseException | None = exc
+        while current is not None:
+            if isinstance(current, asyncio.CancelledError):
+                return False
+            if isinstance(current, TRANSPORT_FATAL_TYPES):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
+
     @classmethod
     def has_active_chat(cls, chat_id: str) -> bool:
         if CancellationHandler.get_event(chat_id) is not None:
@@ -669,37 +688,75 @@ class ChatStreamRuntime:
             await runtime._connect_redis()
             runtime._cancel_event = cancel_event
 
-            async with ClaudeAgentService(
-                session_factory=runtime.session_factory
-            ) as ai_service:
-                session_callback = SessionUpdateCallback(
-                    chat_id=runtime.chat_id,
-                    assistant_message_id=request.assistant_message_id,
-                    session_factory=runtime.session_factory,
-                    session_container=runtime.session_container,
-                )
-                user = User(id=runtime.chat.user_id)
-                stream = ai_service.get_ai_stream(
-                    prompt=request.prompt,
-                    system_prompt=request.system_prompt,
-                    custom_instructions=request.custom_instructions,
-                    user=user,
-                    chat=runtime.chat,
-                    permission_mode=request.permission_mode,
-                    model_id=request.model_id,
-                    session_id=request.session_id,
-                    session_callback=session_callback,
-                    thinking_mode=request.thinking_mode,
-                    attachments=request.attachments,
-                    is_custom_prompt=request.is_custom_prompt,
-                )
-                context_poller = ContextUsagePoller(runtime=runtime)
-                poll_task, stop_event = context_poller.start(ai_service)
+            ai_service = ClaudeAgentService(session_factory=runtime.session_factory)
+            user = User(id=runtime.chat.user_id)
+
+            params: SessionParams = await ai_service.build_session_params(
+                user=user,
+                chat=runtime.chat,
+                system_prompt=request.system_prompt,
+                custom_instructions=request.custom_instructions,
+                model_id=request.model_id,
+                permission_mode=request.permission_mode,
+                session_id=request.session_id,
+                thinking_mode=request.thinking_mode,
+                is_custom_prompt=request.is_custom_prompt,
+            )
+
+            session = await session_registry.get_or_create(
+                chat_id=runtime.chat_id,
+                sandbox_id=params.sandbox_id,
+                provider=params.sandbox_provider,
+                max_thinking_tokens=params.options.max_thinking_tokens,
+                options=params.options,
+                transport_factory=params.transport_factory,
+            )
+
+            session_callback = SessionUpdateCallback(
+                chat_id=runtime.chat_id,
+                assistant_message_id=request.assistant_message_id,
+                session_factory=runtime.session_factory,
+                session_container=runtime.session_container,
+            )
+
+            async with session.lock:
+                session.active_generation_task = asyncio.current_task()
                 try:
-                    return await runtime.run(ai_service, stream)
+                    if params.options.model:
+                        await session.client.set_model(params.options.model)
+                    if params.options.permission_mode:
+                        await session.client.set_permission_mode(
+                            params.options.permission_mode
+                        )
+                    stream = ai_service.stream_with_client(
+                        client=session.client,
+                        prompt=request.prompt,
+                        custom_instructions=request.custom_instructions,
+                        session_id=request.session_id,
+                        session_callback=session_callback,
+                        attachments=request.attachments,
+                    )
+                    context_poller = ContextUsagePoller(runtime=runtime)
+                    poll_task, stop_event = context_poller.start(ai_service)
+                    try:
+                        return await runtime.run(ai_service, stream)
+                    finally:
+                        await ContextUsagePoller.stop(poll_task, stop_event)
+                except (
+                    ClaudeAgentException,
+                    asyncio.CancelledError,
+                ) as exc:
+                    if cls._is_transport_fatal(exc):
+                        session.active_generation_task = None
+                        await session_registry.terminate(runtime.chat_id)
+                    raise
+                except Exception:
+                    session.active_generation_task = None
+                    await session_registry.terminate(runtime.chat_id)
+                    raise
                 finally:
-                    await ContextUsagePoller.stop(poll_task, stop_event)
-            raise RuntimeError("ClaudeAgentService exited without returning")
+                    session.active_generation_task = None
+                    session.last_used_at = time.monotonic()
 
         except asyncio.CancelledError:
             await cls._mark_message_failed(
