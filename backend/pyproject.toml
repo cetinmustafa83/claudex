@@ -135,4 +135,5 @@ DEP002 = [
     "psycopg",
     "python-multipart",
     "bcrypt",
+    "anthropic-bridge",
 ]
