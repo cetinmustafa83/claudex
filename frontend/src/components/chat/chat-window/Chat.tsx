@@ -19,80 +19,53 @@ import { LoadingIndicator } from './LoadingIndicator';
 import { ScrollButton } from './ScrollButton';
 import { ErrorMessage } from './ErrorMessage';
 import { Spinner } from '@/components/ui';
-import type { Message as MessageType, PermissionRequest } from '@/types';
 import { useStreamStore, useMessageQueueStore, EMPTY_QUEUE } from '@/store';
 import { ToolPermissionInline } from '@/components/chat/tools/ToolPermissionInline';
 import { useChatContext } from '@/hooks/useChatContext';
+import { useChatSessionContext } from '@/hooks/useChatSessionContext';
 
 const SCROLL_THRESHOLD_PERCENT = 20;
 
-export interface ChatProps {
-  messages: MessageType[];
-  pendingUserMessageId?: string | null;
-  copiedMessageId: string | null;
-  isLoading: boolean;
-  isStreaming: boolean;
-  isInitialLoading?: boolean;
-  error: Error | null;
-  onCopy: (content: string, id: string) => void;
-  inputMessage: string;
-  setInputMessage: (message: string) => void;
-  onMessageSend: (e: React.FormEvent) => void;
-  onStopStream: () => void;
-  onAttach?: (files: File[]) => void;
-  attachedFiles?: File[] | null;
-  selectedModelId: string;
-  onModelChange: (modelId: string) => void;
-  contextUsage?: {
-    tokensUsed: number;
-    contextWindow: number;
-  };
-  onDismissError?: () => void;
-  fetchNextPage?: () => void;
-  hasNextPage?: boolean;
-  isFetchingNextPage?: boolean;
-  onRestoreSuccess?: () => void;
-  pendingPermissionRequest?: PermissionRequest | null;
-  onPermissionApprove?: () => void;
-  onPermissionReject?: (alternativeInstruction?: string) => void;
-  isPermissionLoading?: boolean;
-  permissionError?: string | null;
-}
-
-export const Chat = memo(function Chat({
-  messages,
-  pendingUserMessageId = null,
-  copiedMessageId,
-  isLoading,
-  isStreaming,
-  isInitialLoading = false,
-  error,
-  onCopy,
-  inputMessage,
-  setInputMessage,
-  onMessageSend,
-  onStopStream,
-  onAttach,
-  attachedFiles,
-  selectedModelId,
-  onModelChange,
-  contextUsage,
-  onDismissError,
-  fetchNextPage,
-  hasNextPage,
-  isFetchingNextPage,
-  onRestoreSuccess,
-  pendingPermissionRequest,
-  onPermissionApprove,
-  onPermissionReject,
-  isPermissionLoading = false,
-  permissionError,
-}: ChatProps) {
+export const Chat = memo(function Chat() {
   const { chatId } = useChatContext();
+  const { state, actions } = useChatSessionContext();
+
+  const {
+    messages,
+    pendingUserMessageId,
+    copiedMessageId,
+    isLoading,
+    isStreaming,
+    isInitialLoading,
+    error,
+    attachedFiles,
+    selectedModelId,
+    contextUsage,
+    hasNextPage,
+    isFetchingNextPage,
+    pendingPermissionRequest,
+    isPermissionLoading,
+    permissionError,
+  } = state;
+
+  const {
+    setInputMessage,
+    onSubmit,
+    onStopStream,
+    onCopy,
+    onAttach,
+    onModelChange,
+    onDismissError,
+    fetchNextPage,
+    onRestoreSuccess,
+    onPermissionApprove,
+    onPermissionReject,
+  } = actions;
+
   const streamingMessageIds = useStreamStore(
-    useShallow((state) => {
+    useShallow((s) => {
       const ids: string[] = [];
-      state.activeStreams.forEach((stream) => {
+      s.activeStreams.forEach((stream) => {
         if (stream.chatId === chatId && stream.isActive) {
           ids.push(stream.messageId);
         }
@@ -101,18 +74,18 @@ export const Chat = memo(function Chat({
     }),
   );
 
-  const pendingMessages = useMessageQueueStore((state) =>
-    chatId ? (state.queues.get(chatId) ?? EMPTY_QUEUE) : EMPTY_QUEUE,
+  const pendingMessages = useMessageQueueStore((s) =>
+    chatId ? (s.queues.get(chatId) ?? EMPTY_QUEUE) : EMPTY_QUEUE,
   );
-  const updateQueuedMessage = useMessageQueueStore((state) => state.updateQueuedMessage);
-  const clearAndSync = useMessageQueueStore((state) => state.clearAndSync);
-  const fetchQueue = useMessageQueueStore((state) => state.fetchQueue);
+  const updateQueuedMessage = useMessageQueueStore((s) => s.updateQueuedMessage);
+  const clearAndSync = useMessageQueueStore((s) => s.clearAndSync);
+  const fetchQueueFn = useMessageQueueStore((s) => s.fetchQueue);
 
   useEffect(() => {
     if (chatId) {
-      void fetchQueue(chatId);
+      void fetchQueueFn(chatId);
     }
-  }, [chatId, fetchQueue]);
+  }, [chatId, fetchQueueFn]);
 
   const handleCancelPending = useCallback(() => {
     if (chatId) {
@@ -307,8 +280,6 @@ export const Chat = memo(function Chat({
 
   const canShowPermissionInline =
     pendingPermissionRequest &&
-    onPermissionApprove &&
-    onPermissionReject &&
     pendingPermissionRequest.tool_name !== 'AskUserQuestion' &&
     pendingPermissionRequest.tool_name !== 'ExitPlanMode';
   const lastBotMessage = lastBotMessageIndex >= 0 ? messages[lastBotMessageIndex] : undefined;
@@ -411,25 +382,22 @@ export const Chat = memo(function Chat({
                 </React.Fragment>
               );
             })}
-            {showPermissionAtEnd &&
-              pendingPermissionRequest &&
-              onPermissionApprove &&
-              onPermissionReject && (
-                <div className="px-4 sm:px-6">
-                  <div className="flex items-start gap-3 sm:gap-4">
-                    <div className="h-8 w-8 flex-shrink-0" />
-                    <div className="mb-3 mt-1 min-w-0 flex-1">
-                      <ToolPermissionInline
-                        request={pendingPermissionRequest}
-                        onApprove={onPermissionApprove}
-                        onReject={onPermissionReject}
-                        isLoading={isPermissionLoading}
-                        error={permissionError}
-                      />
-                    </div>
+            {showPermissionAtEnd && pendingPermissionRequest && (
+              <div className="px-4 sm:px-6">
+                <div className="flex items-start gap-3 sm:gap-4">
+                  <div className="h-8 w-8 flex-shrink-0" />
+                  <div className="mb-3 mt-1 min-w-0 flex-1">
+                    <ToolPermissionInline
+                      request={pendingPermissionRequest}
+                      onApprove={onPermissionApprove}
+                      onReject={onPermissionReject}
+                      isLoading={isPermissionLoading}
+                      error={permissionError}
+                    />
                   </div>
                 </div>
-              )}
+              </div>
+            )}
             {pendingMessages.map((pending) => (
               <PendingMessage
                 key={pending.id}
@@ -454,9 +422,9 @@ export const Chat = memo(function Chat({
         <div className="relative bg-surface pb-safe dark:bg-surface-dark">
           <div className="w-full py-2 lg:mx-auto lg:max-w-3xl">
             <Input
-              message={inputMessage}
+              message={state.inputMessage}
               setMessage={setInputMessage}
-              onSubmit={onMessageSend}
+              onSubmit={onSubmit}
               onAttach={onAttach}
               attachedFiles={attachedFiles}
               isLoading={isLoading}

@@ -30,7 +30,10 @@
 - Run backend static checks (`ruff`, `mypy`) inside the Docker backend container (not on host)
 - Do not run `ruff` or `mypy` directly on the host machine
 - Use Docker-based commands such as `docker compose exec api pytest ...`
-- Use Docker-based commands such as `docker compose exec api ruff check ...` 
+- Use Docker-based commands such as `docker compose exec api ruff check ...`
+- Run frontend type checks via `docker compose exec frontend npx tsc --noEmit`
+- Run frontend lint via `docker compose exec frontend npx eslint src/`
+
 ## Code Style
 
 - Do not optimize for no regressions or long-term resilience unless explicitly requested — favor simple, direct changes over defensive scaffolding
@@ -62,6 +65,41 @@
 - Group related free functions into a class with static methods rather than leaving them as loose module-level functions (e.g., `StreamEnvelope.build()` + `StreamEnvelope.sanitize_payload()` instead of separate `build_envelope()` + `redact_for_audit()`)
 - Prefer one data structure over two when one can serve both purposes — don't add a second dict/set to handle an edge case that can be folded into the primary structure
 - Do not create multiple overlapping data containers for the same concept — if fields are shared across dataclasses, consolidate into one
+
+## Frontend Component Architecture
+
+### React Version
+- Project uses React 19 — use `use()` instead of `useContext()`, pass `ref` as a regular prop instead of `forwardRef`
+
+### Composition Patterns
+- Avoid boolean prop proliferation — don't add `isX`, `showX`, `hideX` boolean props to customize component behavior; use composition instead
+- When a component exceeds ~10 props or has 3+ boolean flags, refactor to a context provider + compound components
+- Use the `state / actions` context interface pattern: define a context with `{ state: StateType; actions: ActionsType }` so UI components consume a generic interface, not a specific implementation
+- Context definitions go in a separate `*Definition.ts` file (e.g., `ChatSessionContextDefinition.ts`), providers in a `*Context.tsx` or `*Provider.tsx` file, and consumer hooks in `hooks/use*.ts`
+- Consumer hooks must use React 19 `use()` and throw if context is null (see `useChatSessionContext.ts` pattern)
+- Provider values must be wrapped in `useMemo` to prevent unnecessary re-renders
+
+### Provider Pattern for Complex Components
+- When a component has extensive internal hook logic (file handling, suggestions, mutations), lift that logic into a dedicated `*Provider.tsx` that wraps children with context
+- The outer component keeps its prop-based API for backward compatibility, internally wrapping `<Provider {...props}><Layout /></Provider>`
+- Sub-components read from context via `use*Context()` hooks instead of receiving props from the parent
+- Reference implementations: `InputProvider.tsx` (wraps Input internals), `ChatSessionProvider` (wraps Chat session state), `FileTreeProvider` (wraps file tree state)
+
+### No Fallback Patterns in Context Interfaces
+- Context interface fields must not be optional (`?`) when the provider always supplies them — optional markers on always-provided fields are legacy shims
+- Do not add nullability guards (`value && doSomething()`) on context values that are guaranteed by the provider — these are leftover prop-era checks
+- Do not add `?? null` / `?? false` / `?? []` coercions in the provider unless the upstream source genuinely returns `undefined` and the context type requires a concrete value — if the types already match, pass directly
+
+### Existing Context Hierarchy
+- `ChatProvider` (`contexts/ChatContext.tsx`) — static chat metadata: `chatId`, `sandboxId`, `fileStructure`, `customAgents`, `customSlashCommands`, `customPrompts`
+- `ChatSessionProvider` (`contexts/ChatSessionContext.tsx`) — dynamic chat session state: messages, streaming, loading, permissions, input message, model selection
+- `InputProvider` (`components/chat/message-input/InputProvider.tsx`) — input-specific internal state: file handling, drag-and-drop, suggestions, enhancement, submit logic
+- `LayoutContext` (`components/layout/layoutState.tsx`) — sidebar state
+- `FileTreeProvider` (`components/editor/file-tree/FileTreeProvider.tsx`) — file tree selection and expansion state
+
+### Component Variants
+- Create explicit variant components instead of one component with many boolean modes (e.g., `ThreadComposer`, `EditComposer` instead of `<Composer isThread isEditing />`)
+- Use `children` for composing static structure; use render props only when the parent needs to pass data back to the child (e.g., `renderItem` in lists)
 
 ## Frontend UI/UX Guidelines
 
