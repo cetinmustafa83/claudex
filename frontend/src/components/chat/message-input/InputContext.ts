@@ -1,0 +1,57 @@
+import { createContext, type RefObject } from 'react';
+import type { MentionItem, SlashCommand } from '@/types';
+import type { ContextUsageInfo } from './ContextUsageIndicator';
+
+export interface InputContextValue {
+  message: string;
+  setMessage: (value: string) => void;
+  isLoading: boolean;
+  isStreaming: boolean;
+  chatId?: string;
+  placeholder: string;
+  compact: boolean;
+  formRef: RefObject<HTMLFormElement | null>;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  hasMessage: boolean;
+  hasAttachments: boolean;
+  isEnhancing: boolean;
+  handleSubmit: (e: React.FormEvent) => void;
+  submitOrStop: () => void;
+  handleKeyDown: (e: React.KeyboardEvent<Element>) => void;
+  handleSendClick: (e: React.MouseEvent) => void;
+  showLoadingSpinner: boolean;
+  selectedModelId: string;
+  onModelChange: (modelId: string) => void;
+  dropdownPosition: 'top' | 'bottom';
+  attachedFiles: File[] | null;
+  previewUrls: string[];
+  showPreview: boolean;
+  isDragging: boolean;
+  dragHandlers: Record<string, (e: React.DragEvent) => void>;
+  resetDragState: () => void;
+  showFileUpload: boolean;
+  setShowFileUpload: (v: boolean) => void;
+  showDrawingModal: boolean;
+  editingImageIndex: number | null;
+  handleFileSelect: (files: File[]) => void;
+  handleRemoveFile: (index: number) => void;
+  handleDrawClick: (index: number) => void;
+  handleDrawingSave: (dataUrl: string) => Promise<void>;
+  closeDrawingModal: () => void;
+  handleEnhancePrompt: () => void;
+  contextUsage?: ContextUsageInfo;
+  showTip: boolean;
+  cursorPosition: number;
+  setCursorPosition: (pos: number) => void;
+  slashCommandSuggestions: SlashCommand[];
+  highlightedSlashCommandIndex: number;
+  selectSlashCommand: (command: SlashCommand) => void;
+  isMentionActive: boolean;
+  filteredFiles: MentionItem[];
+  filteredAgents: MentionItem[];
+  filteredPrompts: MentionItem[];
+  highlightedMentionIndex: number;
+  selectMention: (item: MentionItem) => void;
+}
+
+export const InputContext = createContext<InputContextValue | null>(null);

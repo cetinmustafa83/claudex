@@ -20,6 +20,8 @@ import { useContextUsageState } from '@/hooks/useContextUsageState';
 import { useSettingsQuery, useModelSelection } from '@/hooks/queries';
 import { mergeAgents } from '@/utils/settings';
 import { ChatProvider } from '@/contexts/ChatContext';
+import { ChatSessionProvider } from '@/contexts/ChatSessionContext';
+import type { ChatSessionState, ChatSessionActions } from '@/contexts/ChatSessionContextDefinition';
 
 const Editor = lazy(() =>
   import('@/components/editor/editor-core/Editor').then((m) => ({ default: m.Editor })),
@@ -274,40 +276,82 @@ export function ChatPage() {
 
   useLayoutSidebar(sidebarContent);
 
+  const chatSessionState = useMemo<ChatSessionState>(
+    () => ({
+      messages,
+      inputMessage: streamingState.inputMessage,
+      isLoading,
+      isStreaming,
+      isInitialLoading: messagesQuery.isLoading,
+      error,
+      copiedMessageId: streamingState.copiedMessageId,
+      pendingUserMessageId: streamingState.pendingUserMessageId ?? null,
+      attachedFiles: streamingState.inputFiles ?? null,
+      selectedModelId,
+      contextUsage,
+      hasNextPage: messagesQuery.hasNextPage ?? false,
+      isFetchingNextPage: messagesQuery.isFetchingNextPage ?? false,
+      pendingPermissionRequest: pendingRequest ?? null,
+      isPermissionLoading,
+      permissionError: permissionError ?? null,
+    }),
+    [
+      messages,
+      streamingState.inputMessage,
+      streamingState.copiedMessageId,
+      streamingState.pendingUserMessageId,
+      streamingState.inputFiles,
+      isLoading,
+      isStreaming,
+      messagesQuery.isLoading,
+      messagesQuery.hasNextPage,
+      messagesQuery.isFetchingNextPage,
+      error,
+      selectedModelId,
+      contextUsage,
+      pendingRequest,
+      isPermissionLoading,
+      permissionError,
+    ],
+  );
+
+  const chatSessionActions = useMemo<ChatSessionActions>(
+    () => ({
+      setInputMessage: streamingState.setInputMessage,
+      onSubmit: streamingState.handleMessageSend,
+      onStopStream: streamingState.handleStop,
+      onCopy: streamingState.handleCopy,
+      onAttach: streamingState.setInputFiles,
+      onModelChange: selectModel,
+      onDismissError: streamingState.handleDismissError,
+      fetchNextPage: messagesQuery.fetchNextPage,
+      onRestoreSuccess: handleRestoreSuccess,
+      onPermissionApprove: handleApprove,
+      onPermissionReject: handleReject,
+    }),
+    [
+      streamingState.setInputMessage,
+      streamingState.handleMessageSend,
+      streamingState.handleStop,
+      streamingState.handleCopy,
+      streamingState.setInputFiles,
+      streamingState.handleDismissError,
+      selectModel,
+      messagesQuery.fetchNextPage,
+      handleRestoreSuccess,
+      handleApprove,
+      handleReject,
+    ],
+  );
+
   const renderNonTerminalView = useCallback(
     (view: ViewType): ReactNode => {
       switch (view) {
         case 'agent':
           return (
-            <ChatComponent
-              messages={messages}
-              pendingUserMessageId={streamingState.pendingUserMessageId}
-              copiedMessageId={streamingState.copiedMessageId}
-              isLoading={isLoading}
-              isStreaming={isStreaming}
-              isInitialLoading={messagesQuery.isLoading}
-              error={error}
-              onCopy={streamingState.handleCopy}
-              inputMessage={streamingState.inputMessage}
-              setInputMessage={streamingState.setInputMessage}
-              onMessageSend={streamingState.handleMessageSend}
-              onStopStream={streamingState.handleStop}
-              onAttach={streamingState.setInputFiles}
-              selectedModelId={selectedModelId}
-              onModelChange={selectModel}
-              attachedFiles={streamingState.inputFiles}
-              contextUsage={contextUsage}
-              onDismissError={streamingState.handleDismissError}
-              fetchNextPage={messagesQuery.fetchNextPage}
-              hasNextPage={messagesQuery.hasNextPage}
-              isFetchingNextPage={messagesQuery.isFetchingNextPage}
-              onRestoreSuccess={handleRestoreSuccess}
-              pendingPermissionRequest={pendingRequest}
-              onPermissionApprove={handleApprove}
-              onPermissionReject={handleReject}
-              isPermissionLoading={isPermissionLoading}
-              permissionError={permissionError}
-            />
+            <ChatSessionProvider state={chatSessionState} actions={chatSessionActions}>
+              <ChatComponent />
+            </ChatSessionProvider>
           );
         case 'editor':
           return (
@@ -360,29 +404,16 @@ export function ChatPage() {
       }
     },
     [
-      messages,
-      streamingState,
-      isLoading,
-      isStreaming,
-      messagesQuery,
-      error,
-      selectedModelId,
-      selectModel,
-      contextUsage,
+      chatSessionState,
+      chatSessionActions,
       currentChat,
       chatId,
-      handleRestoreSuccess,
       fileStructure,
       selectedFile,
       handleFileSelect,
       isFileMetadataLoading,
       handleRefresh,
       isRefreshing,
-      pendingRequest,
-      handleApprove,
-      handleReject,
-      isPermissionLoading,
-      permissionError,
     ],
   );
 

@@ -1,0 +1,357 @@
+import { useRef, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
+import { useDragAndDrop } from '@/hooks/useDragAndDrop';
+import { useFileHandling } from '@/hooks/useFileHandling';
+import { useInputFileOperations } from '@/hooks/useInputFileOperations';
+import { useSlashCommandSuggestions } from '@/hooks/useSlashCommandSuggestions';
+import { useEnhancePromptMutation } from '@/hooks/queries';
+import { useMentionSuggestions } from '@/hooks/useMentionSuggestions';
+import { useMessageQueueStore, useUIStore } from '@/store';
+import { useChatContext } from '@/hooks/useChatContext';
+import { InputContext } from './InputContext';
+import type { InputProps } from './Input';
+import type { MentionItem, SlashCommand } from '@/types';
+
+export function InputProvider({
+  message,
+  setMessage,
+  onSubmit,
+  onAttach,
+  attachedFiles = null,
+  isLoading,
+  isStreaming = false,
+  onStopStream,
+  placeholder = 'Message Claudex...',
+  selectedModelId,
+  onModelChange,
+  dropdownPosition = 'top',
+  showAttachedFilesPreview = true,
+  contextUsage,
+  showTip = true,
+  compact = true,
+  chatId,
+  showLoadingSpinner = false,
+  children,
+}: InputProps & { children: ReactNode }) {
+  const { fileStructure, customAgents, customSlashCommands, customPrompts } = useChatContext();
+  const formRef = useRef<HTMLFormElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showPreview, setShowPreview] = useState(true);
+  const [cursorPosition, setCursorPosition] = useState(0);
+
+  const queueMessage = useMessageQueueStore((state) => state.queueMessage);
+  const permissionMode = useUIStore((state) => state.permissionMode);
+  const thinkingMode = useUIStore((state) => state.thinkingMode);
+  const clearAttachedFiles = onAttach;
+
+  const { previewUrls } = useFileHandling({
+    initialFiles: attachedFiles,
+  });
+
+  const {
+    showFileUpload,
+    setShowFileUpload,
+    showDrawingModal,
+    editingImageIndex,
+    handleFileSelect,
+    handleRemoveFile,
+    handleDrawClick,
+    handleDrawingSave,
+    handleDroppedFiles,
+    closeDrawingModal,
+  } = useInputFileOperations({
+    attachedFiles,
+    onAttach,
+  });
+
+  const { isDragging, dragHandlers, resetDragState } = useDragAndDrop({
+    onFilesDrop: handleDroppedFiles,
+  });
+
+  const focusTextarea = useCallback((text: string) => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      setTimeout(() => {
+        textarea.focus();
+        const length = text.length;
+        textarea.setSelectionRange(length, length);
+      }, 0);
+    }
+  }, []);
+
+  const enhancePromptMutation = useEnhancePromptMutation({
+    onSuccess: (enhancedPrompt) => {
+      setMessage(enhancedPrompt);
+      focusTextarea(enhancedPrompt);
+    },
+  });
+
+  const hasMessage = message.trim().length > 0;
+  const hasAttachments = (attachedFiles?.length ?? 0) > 0;
+  const isEnhancing = enhancePromptMutation.isPending;
+
+  const handleSlashCommandSelect = useCallback(
+    (command: SlashCommand) => {
+      setShowPreview(false);
+      const newMessage = `${command.value} `;
+      setMessage(newMessage);
+      focusTextarea(newMessage);
+    },
+    [setMessage, focusTextarea],
+  );
+
+  const {
+    filteredCommands: slashCommandSuggestions,
+    highlightedIndex: highlightedSlashCommandIndex,
+    selectCommand: selectSlashCommand,
+    handleKeyDown: handleSlashCommandKeyDown,
+  } = useSlashCommandSuggestions({
+    message,
+    onSelect: handleSlashCommandSelect,
+    customSlashCommands,
+  });
+
+  const handleMentionSelect = useCallback(
+    (item: MentionItem, mentionStartPos: number, mentionEndPos: number) => {
+      const beforeMention = message.slice(0, mentionStartPos);
+      const afterMention = message.slice(mentionEndPos);
+      const newMessage = `${beforeMention}@${item.path} ${afterMention}`;
+      const newCursorPos = mentionStartPos + item.path.length + 2;
+
+      setMessage(newMessage);
+
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+          setCursorPosition(newCursorPos);
+        }
+      }, 0);
+    },
+    [message, setMessage],
+  );
+
+  const {
+    filteredFiles,
+    filteredAgents,
+    filteredPrompts,
+    highlightedIndex: highlightedMentionIndex,
+    selectItem: selectMention,
+    handleKeyDown: handleMentionKeyDown,
+    isActive: isMentionActive,
+  } = useMentionSuggestions({
+    message,
+    cursorPosition: cursorPosition,
+    fileStructure,
+    customAgents,
+    customPrompts,
+    onSelect: handleMentionSelect,
+  });
+
+  useEffect(() => {
+    setShowPreview(showAttachedFilesPreview && hasAttachments);
+  }, [hasAttachments, showAttachedFilesPreview]);
+
+  const handleSubmit = useCallback(
+    (event: React.FormEvent) => {
+      event.preventDefault();
+      if (!hasMessage) return;
+
+      setShowPreview(false);
+      onSubmit(event);
+    },
+    [hasMessage, onSubmit],
+  );
+
+  const submitOrStop = useCallback(() => {
+    if (isStreaming && !hasMessage) {
+      onStopStream?.();
+      return;
+    }
+
+    if (isStreaming && hasMessage && chatId) {
+      void queueMessage(
+        chatId,
+        message.trim(),
+        selectedModelId,
+        permissionMode,
+        thinkingMode,
+        attachedFiles ?? undefined,
+      );
+      setMessage('');
+      clearAttachedFiles?.([]);
+      setShowPreview(false);
+      return;
+    }
+
+    if (isLoading) {
+      onStopStream?.();
+      return;
+    }
+
+    if (!hasMessage) return;
+
+    setShowPreview(false);
+
+    const formElement = formRef.current;
+    if (formElement && typeof formElement.requestSubmit === 'function') {
+      formElement.requestSubmit();
+      return;
+    }
+
+    const formEvent = new Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    }) as unknown as React.FormEvent;
+    onSubmit(formEvent);
+  }, [
+    hasMessage,
+    isLoading,
+    isStreaming,
+    onStopStream,
+    onSubmit,
+    chatId,
+    message,
+    attachedFiles,
+    queueMessage,
+    setMessage,
+    clearAttachedFiles,
+    selectedModelId,
+    permissionMode,
+    thinkingMode,
+  ]);
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<Element>) => {
+      const handledByMentions = handleMentionKeyDown(event);
+      if (handledByMentions) return;
+
+      const handledBySlashCommands = handleSlashCommandKeyDown(event);
+      if (handledBySlashCommands) return;
+
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        submitOrStop();
+      }
+    },
+    [handleMentionKeyDown, handleSlashCommandKeyDown, submitOrStop],
+  );
+
+  const handleSendClick = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault();
+      submitOrStop();
+    },
+    [submitOrStop],
+  );
+
+  const handleEnhancePrompt = useCallback(() => {
+    if (!hasMessage || isEnhancing) return;
+    enhancePromptMutation.mutate({ prompt: message.trim(), modelId: selectedModelId });
+  }, [hasMessage, isEnhancing, message, selectedModelId, enhancePromptMutation]);
+
+  const dynamicPlaceholder = isStreaming ? 'Type to queue message...' : placeholder;
+
+  const value = useMemo(
+    () => ({
+      message,
+      setMessage,
+      isLoading,
+      isStreaming,
+      chatId,
+      placeholder: dynamicPlaceholder,
+      compact,
+      formRef,
+      textareaRef,
+      hasMessage,
+      hasAttachments,
+      isEnhancing,
+      handleSubmit,
+      submitOrStop,
+      handleKeyDown,
+      handleSendClick,
+      showLoadingSpinner,
+      selectedModelId,
+      onModelChange,
+      dropdownPosition,
+      attachedFiles,
+      previewUrls,
+      showPreview,
+      isDragging,
+      dragHandlers,
+      resetDragState,
+      showFileUpload,
+      setShowFileUpload,
+      showDrawingModal,
+      editingImageIndex,
+      handleFileSelect,
+      handleRemoveFile,
+      handleDrawClick,
+      handleDrawingSave,
+      closeDrawingModal,
+      handleEnhancePrompt,
+      contextUsage,
+      showTip,
+      cursorPosition,
+      setCursorPosition,
+      slashCommandSuggestions,
+      highlightedSlashCommandIndex,
+      selectSlashCommand,
+      isMentionActive,
+      filteredFiles,
+      filteredAgents,
+      filteredPrompts,
+      highlightedMentionIndex,
+      selectMention,
+    }),
+    [
+      message,
+      setMessage,
+      isLoading,
+      isStreaming,
+      chatId,
+      dynamicPlaceholder,
+      compact,
+      hasMessage,
+      hasAttachments,
+      isEnhancing,
+      handleSubmit,
+      submitOrStop,
+      handleKeyDown,
+      handleSendClick,
+      showLoadingSpinner,
+      selectedModelId,
+      onModelChange,
+      dropdownPosition,
+      attachedFiles,
+      previewUrls,
+      showPreview,
+      isDragging,
+      dragHandlers,
+      resetDragState,
+      showFileUpload,
+      setShowFileUpload,
+      showDrawingModal,
+      editingImageIndex,
+      handleFileSelect,
+      handleRemoveFile,
+      handleDrawClick,
+      handleDrawingSave,
+      closeDrawingModal,
+      handleEnhancePrompt,
+      contextUsage,
+      showTip,
+      cursorPosition,
+      setCursorPosition,
+      slashCommandSuggestions,
+      highlightedSlashCommandIndex,
+      selectSlashCommand,
+      isMentionActive,
+      filteredFiles,
+      filteredAgents,
+      filteredPrompts,
+      highlightedMentionIndex,
+      selectMention,
+    ],
+  );
+
+  return <InputContext.Provider value={value}>{children}</InputContext.Provider>;
+}
