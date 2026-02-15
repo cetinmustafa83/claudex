@@ -54,6 +54,8 @@ wheels/
 # Env
 *.env
 
+.agents/
+.claude/
 **/.claude/settings.local.json
 
 # Celery beat artifacts
