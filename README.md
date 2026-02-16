@@ -1,6 +1,6 @@
 # Claudex
 
-Your own Claude Code UI. Open source, self-hosted, runs entirely on your machine.
+Self-hosted Claude Code workspace with multi-provider routing, sandboxed execution, and a full web IDE.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/)
@@ -10,22 +10,67 @@ Your own Claude Code UI. Open source, self-hosted, runs entirely on your machine
 
 ## Community
 
-Join our [Discord server](https://discord.gg/cp3sBgEX) to get help, share feedback, and connect with other users.
+Join the [Discord server](https://discord.gg/cp3sBgEX).
 
-## Why Claudex?
+## Why Claudex
 
-- **Multiple sandboxes** - Docker (local), E2B (cloud), or Modal (cloud).
-- **Use your own plans** - Claude Max, OpenRouter, OpenAI, or custom providers.
-- **Full IDE experience** - VS Code in browser, terminal, file explorer.
-- **Extensible** - Skills, agents, slash commands, MCP servers.
+- Claude Code as the execution harness, exposed through a self-hosted web UI
+- One workflow across Anthropic, OpenAI, GitHub Copilot, OpenRouter, and custom Anthropic-compatible endpoints
+- Anthropic Bridge routing for non-Anthropic providers while preserving Claude Code behavior
+- Isolated sandbox backends (Docker, E2B, Modal, host)
+- Extension surface: MCP servers, skills, agents, slash commands, prompts, and marketplace plugins
+- Provider switching with shared working context
 
-## Screenshots
+## Core Architecture
 
-![Chat Interface](screenshots/chat-interface.png)
+```text
+React/Vite Frontend
+  -> FastAPI Backend
+  -> PostgreSQL + Redis (web/docker mode)
+  -> SQLite + in-memory cache/pubsub (desktop mode)
+  -> Sandbox runtime (Docker/E2B/Modal/Host)
+  -> Claude Code CLI + claude-agent-sdk
+```
 
-![Agent Workflow](screenshots/agent-workflow.png)
+### Claude Code harness
 
-## Quick Start
+Claudex runs chats through `claude-agent-sdk`, which drives the Claude Code CLI in the selected sandbox. This keeps Claude Code-native behavior for tools, session flow, permission modes, and MCP orchestration.
+
+### Anthropic Bridge for non-Anthropic providers
+
+For OpenAI, OpenRouter, and Copilot providers, Claudex starts `anthropic-bridge` inside the sandbox and routes Claude Code requests through:
+
+- `ANTHROPIC_BASE_URL=http://127.0.0.1:3456`
+- provider-specific auth secrets such as `OPENROUTER_API_KEY` and `GITHUB_COPILOT_TOKEN`
+- provider-scoped model IDs like `openai/gpt-5.2-codex`, `openrouter/moonshotai/kimi-k2.5`, `copilot/gpt-5.2-codex`
+
+```text
+Claudex UI
+  -> Claude Agent SDK + Claude Code CLI
+  -> Anthropic-compatible request shape
+  -> Anthropic Bridge (OpenAI/OpenRouter/Copilot)
+  -> Target provider model
+```
+
+For Anthropic providers, Claudex uses your Claude auth token directly. For custom providers, Claudex calls your configured Anthropic-compatible `base_url`.
+
+## Key Features
+
+- Claude Code-native chat execution through `claude-agent-sdk`
+- Anthropic Bridge provider routing with provider-scoped models (`openai/*`, `openrouter/*`, `copilot/*`)
+- Multi-sandbox runtime (Docker/E2B/Modal/Host)
+- MCP + custom skills/agents/commands + plugin marketplace
+- Checkpoint restore and chat forking from any prior message state
+- Streaming architecture with resumable SSE events and explicit cancellation
+- Built-in recurring task scheduler (in-process async, no worker service)
+
+## Quick Start (Web)
+
+### Requirements
+
+- Docker + Docker Compose
+
+### Start
 
 ```bash
 git clone https://github.com/Mng-dev-ai/claudex.git
@@ -33,184 +78,143 @@ cd claudex
 docker compose -p claudex-web -f docker-compose.yml up -d
 ```
 
-Open http://localhost:3000
+Open [http://localhost:3000](http://localhost:3000).
+
+### Stop and logs
+
+```bash
+docker compose -p claudex-web -f docker-compose.yml down
+docker compose -p claudex-web -f docker-compose.yml logs -f
+```
 
 ## Desktop (macOS)
 
-See [Desktop Setup](docs/desktop-local.md) to run Claudex as a native macOS app.
+Desktop mode uses Tauri with a bundled Python backend sidecar on `localhost:8081`, with local SQLite storage.
 
-## Features
+### Download prebuilt app
 
-### Sandboxed Code Execution
-Run AI agents in isolated environments with multiple sandbox providers:
-- **Docker** - Fully local, no external dependencies
-- **E2B** - Cloud sandboxes with [e2b.dev](https://e2b.dev)
-- **Modal** - Serverless cloud sandboxes with [modal.com](https://modal.com)
+- Apple Silicon DMG: [Claudex_0.1.0_aarch64.dmg](https://github.com/Mng-dev-ai/claudex/releases/download/v0.1.1/Claudex_0.1.0_aarch64.dmg)
 
-### Full Development Environment
-- VS Code editor in the browser
-- Terminal with full PTY support
-- File system management
-- Port forwarding for web previews
-- Environment checkpoints and snapshots
+### How it works
 
-### VNC Browser Control
-View and interact with a browser running inside the sandbox via VNC. Use Playwright MCP with Chrome DevTools Protocol (CDP) to let Claude control the browser programmatically.
+When running in desktop mode:
 
-### Multiple AI Providers
-Switch between providers in the same chat:
-- **Anthropic** - Use your [Max plan](https://claude.ai/upgrade)
-- **OpenAI** - Use your [ChatGPT Pro subscription](https://openai.com/chatgpt/pricing/) (GPT-5.2 Codex, GPT-5.2)
-- **OpenRouter** - Access to multiple model providers
-- **Custom** - Any Anthropic-compatible API endpoint
+- Tauri hosts the frontend in a native macOS window
+- the sidecar backend process serves the API on `8081`
+- desktop uses local SQLite plus in-memory cache/pubsub (no Postgres/Redis dependency required for desktop mode)
 
-### Extend with Skills & Agents
-- **Custom Skills** - ZIP packages with YAML metadata
-- **Custom Agents** - Define agents with specific tool configurations
-- **Slash Commands** - Built-in (`/context`, `/compact`, `/review`, `/init`)
-- **MCP Servers** - Model Context Protocol support (NPX, BunX, UVX, HTTP)
-
-### Scheduled Tasks
-Automate recurring tasks with Celery workers.
-
-### Chat Features
-- Fork chats from any message point
-- Restore to any previous message in history
-- File attachments with preview
-
-### Preview Capabilities
-- Web preview for running applications
-- Mobile viewport simulation
-- File previews: Markdown, HTML, images, CSV, PDF, PowerPoint
-
-### Marketplace
-- Browse and install plugins from official catalog
-- One-click installation of agents, skills, commands, MCPs
-
-### Secrets Management
-- Environment variables for sandbox execution
-
-### Integrations
-- **Gmail** - Read, send, and manage emails via [Gmail MCP Server](https://github.com/GongRzhe/Gmail-MCP-Server)
-
-#### Gmail Setup
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a project and enable the Gmail API
-3. Create OAuth credentials (Desktop app for localhost, Web application for hosted URLs)
-4. If using Web application, add redirect URI: `https://YOUR_DOMAIN/api/v1/integrations/gmail/callback`
-5. Download the JSON credentials file
-6. In Claudex Settings → Integrations, upload your credentials file
-7. Click Connect Gmail to authorize
-
-### Custom Instructions
-- System prompts for global context
-- Custom instructions injected with each message
-
-## Configuration
-
-Configure providers in Settings → Providers after login.
-
-All providers use Claude Code under the hood. Non-Anthropic providers work through [Anthropic Bridge](https://github.com/Mng-dev-ai/anthropic-bridge), which translates Anthropic API calls to other providers.
-
-```
-┌─────────────┐     ┌───────────────────┐     ┌───────────────────────┐
-│   Claudex   │────▶│  Anthropic Bridge │────▶│  OpenAI / OpenRouter  │
-│             │     │  (API Translator) │     │  / Custom             │
-└─────────────┘     └───────────────────┘     └───────────────────────┘
+```text
+Tauri Desktop App
+  -> React frontend (.env.desktop)
+  -> bundled backend sidecar (localhost:8081)
+  -> local SQLite database
 ```
 
-This means all providers share the same conversation history stored in `~/.claude` JSONL files, plus the same slash commands, skills, agents, and MCP servers. You can develop a feature with Claude, then switch to GPT-5.2 Codex for review—it already has the full context without needing to re-read files.
+### Build and run from source
 
-### Supported Providers
+Requirements:
 
-| Provider | Auth Method | Models |
-|----------|-------------|--------|
-| Anthropic | OAuth token from `claude setup-token` | Sonnet 4.5, Opus 4.5, Haiku 4.5 |
-| OpenAI | Auth file from `codex login` | GPT-5.2 Codex, GPT-5.2 |
-| OpenRouter | API key | Multiple providers |
-| Custom | API key | Any Anthropic-compatible endpoint |
+- Node.js
+- Rust
 
-### OpenAI Setup (ChatGPT Pro)
-
-Use OpenAI models with your ChatGPT Pro subscription:
-
-1. Install [Codex CLI](https://github.com/openai/codex)
-2. Run `codex login` and authenticate with your ChatGPT account
-3. In Claudex Settings → Providers, add an OpenAI provider
-4. Upload your `~/.codex/auth.json` file
-
-### Custom Providers
-
-Use any Anthropic-compatible API endpoint:
-
-1. Get your API key from your provider
-2. In Claudex Settings → Providers, add a Custom provider
-3. Enter your API endpoint URL and API key
-
-Compatible coding plans:
-- [GLM Coding Plan](https://z.ai/subscribe)
-- [Kimi Coding Plan](https://www.kimi.com/code)
-- [MiniMax Coding Plan](https://platform.minimax.io/subscribe/coding-plan)
-
-You only need one AI provider configured.
-
-## Architecture
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│    Frontend     │────▶│   FastAPI       │────▶│   PostgreSQL    │
-│   React/Vite    │     │   Backend       │     │   Database      │
-└─────────────────┘     └────────┬────────┘     └─────────────────┘
-                                 │
-                    ┌────────────┼────────────┐
-                    ▼            ▼            ▼
-            ┌───────────┐ ┌───────────┐ ┌─────────────────┐
-            │   Redis   │ │  Celery   │ │ Docker Sandbox  │
-            │  Pub/Sub  │ │  Workers  │ │                 │
-            └───────────┘ └───────────┘ └─────────────────┘
-```
-
-## Tech Stack
-
-**Frontend:** React 19, TypeScript, Vite, TailwindCSS, Zustand, React Query, Monaco Editor, XTerm.js
-
-**Backend:** FastAPI, Python 3.13, SQLAlchemy 2.0, Celery, Redis, Granian
-
-## Services
-
-| Service | Port |
-|---------|------|
-| Frontend | 3000 |
-| Backend API | 8080 |
-| PostgreSQL | 5432 |
-| Redis | 6379 |
-
-## Commands
+Dev workflow:
 
 ```bash
-docker compose -p claudex-web -f docker-compose.yml up -d      # Start web stack
-docker compose -p claudex-web -f docker-compose.yml down       # Stop web stack
-docker compose -p claudex-web -f docker-compose.yml logs -f    # Web logs
+cd frontend
+npm install
+npm run desktop:dev
 ```
+
+Build (unsigned dev):
+
+```bash
+cd frontend
+npm run desktop:build
+```
+
+App bundle output:
+
+- `frontend/src-tauri/target/release/bundle/macos/Claudex.app`
+
+Desktop troubleshooting:
+
+- Backend unavailable: wait for sidecar startup to finish
+- Database errors: verify local app data directory permissions
+- Port conflict: free port `8081` if already in use
+
+## Provider Setup
+
+Configure providers in `Settings -> Providers`.
+
+- `anthropic`: paste token from `claude setup-token`
+- `openai`: authenticate with OpenAI device flow in UI
+- `copilot`: authenticate with GitHub device flow in UI
+- `openrouter`: add OpenRouter API key and model IDs
+- `custom`: set Anthropic-compatible `base_url`, token, and model IDs
+
+### Model examples
+
+- OpenAI/Codex: `gpt-5.2-codex`, `gpt-5.2`, `gpt-5.3-codex`
+- OpenRouter catalog examples: `moonshotai/kimi-k2.5`, `minimax/minimax-m2.1`, `google/gemini-3-pro-preview`
+- Custom gateways: models like `GLM-5`, `M2.5`, or private org-specific endpoints (depends on your backend compatibility)
+
+## Shared Working Context
+
+Switching providers does not require a new workflow:
+
+- Same sandbox filesystem/workdir
+- Same `.claude` resources (skills, agents, commands)
+- Same MCP configuration in Claudex
+- Same chat-level execution flow
+
+This is the main value of using Claude Code as the harness while changing inference providers behind Anthropic Bridge.
+
+## Services and Ports (Web)
+
+- Frontend: `3000`
+- Backend API: `8080`
+- PostgreSQL: `5432`
+- Redis: `6379`
+- VNC: `5900`
+- VNC Web: `6080`
+- OpenVSCode server: `8765`
+
+## API and Admin
+
+- API docs: [http://localhost:8080/api/v1/docs](http://localhost:8080/api/v1/docs)
+- Admin panel: [http://localhost:8080/admin](http://localhost:8080/admin)
+
+## Health and Ops
+
+- Liveness endpoint: `GET /health`
+- Readiness endpoint: `GET /api/v1/readyz`
+  - web mode checks database + Redis
+  - desktop mode checks database (SQLite) only
 
 ## Deployment
 
-For production deployment on a VPS, see the [Coolify Installation Guide](docs/coolify-installation-guide.md).
-Production routing uses a single domain with path prefixes: frontend at `/` and API at `/api/*`.
+- VPS/Coolify guide: [docs/coolify-installation-guide.md](docs/coolify-installation-guide.md)
+- Production setup uses frontend at `/` and API under `/api/*`
 
-## API & Admin
+## Screenshots
 
-- **API Docs:** http://localhost:8080/api/v1/docs
-- **Admin Panel:** http://localhost:8080/admin
+![Chat Interface](screenshots/chat-interface.png)
+![Agent Workflow](screenshots/agent-workflow.png)
 
-## Contributing
+## Tech Stack
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Open a Pull Request
+- Frontend: React 19, TypeScript, Vite, TailwindCSS, Zustand, React Query
+- Backend: FastAPI, SQLAlchemy, Redis, PostgreSQL/SQLite, Granian
+- Runtime: Claude Code CLI, claude-agent-sdk, anthropic-bridge
 
 ## License
 
-Apache 2.0 - see [LICENSE](LICENSE)
+Apache 2.0. See [LICENSE](LICENSE).
+
+## References
+
+- Anthropic Claude Code SDK: [docs.anthropic.com/s/claude-code-sdk](https://docs.anthropic.com/s/claude-code-sdk)
+- Anthropic Bridge package: [pypi.org/project/anthropic-bridge](https://pypi.org/project/anthropic-bridge/)
+- OpenAI Codex CLI sign-in: [help.openai.com/en/articles/11381614](https://help.openai.com/en/articles/11381614)
+- OpenRouter API keys: [openrouter.ai/docs/api-keys](https://openrouter.ai/docs/api-keys)
+- GitHub Copilot plans: [github.com/features/copilot/plans](https://github.com/features/copilot/plans)
