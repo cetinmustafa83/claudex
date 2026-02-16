@@ -7,15 +7,14 @@ import React, {
   memo,
   useMemo,
 } from 'react';
-import { useInView } from 'react-intersection-observer';
-import { findLastBotMessageIndex } from '@/utils/message';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { isBrowserObjectUrl } from '@/utils/attachmentUrl';
 import { UserMessage, AssistantMessage } from '@/components/chat/message-bubble/Message';
 import { PendingMessage } from '@/components/chat/message-bubble/PendingMessage';
 import { Input } from '@/components/chat/message-input/Input';
 import { ChatSkeleton } from './ChatSkeleton';
-import { LoadingIndicator } from './LoadingIndicator';
 import { ScrollButton } from './ScrollButton';
+import { ThinkingIndicator } from './ThinkingIndicator';
 import { ErrorMessage } from './ErrorMessage';
 import { Spinner } from '@/components/ui/primitives/Spinner';
 import { useStreamStore } from '@/store/streamStore';
@@ -26,6 +25,7 @@ import { useChatSessionContext } from '@/hooks/useChatSessionContext';
 import { useChatInputMessageContext } from '@/hooks/useChatInputMessageContext';
 
 const SCROLL_THRESHOLD_PERCENT = 20;
+const INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 
 export const Chat = memo(function Chat() {
   const { chatId } = useChatContext();
@@ -61,8 +61,8 @@ export const Chat = memo(function Chat() {
 
   const { inputMessage, setInputMessage } = useChatInputMessageContext();
 
-  const activeStreams = useStreamStore((state) => state.activeStreams);
-  const streamIdByChatMessage = useStreamStore((state) => state.streamIdByChatMessage);
+  const activeStreams = useStreamStore((streamState) => streamState.activeStreams);
+  const streamIdByChatMessage = useStreamStore((streamState) => streamState.streamIdByChatMessage);
   const streamingMessageIdSet = useMemo(() => {
     const ids = new Set<string>();
     if (!chatId) return ids;
@@ -77,8 +77,8 @@ export const Chat = memo(function Chat() {
     return ids;
   }, [activeStreams, chatId, streamIdByChatMessage]);
 
-  const pendingMessages = useMessageQueueStore((s) =>
-    chatId ? (s.queues.get(chatId) ?? EMPTY_QUEUE) : EMPTY_QUEUE,
+  const pendingMessages = useMessageQueueStore((storeState) =>
+    chatId ? (storeState.queues.get(chatId) ?? EMPTY_QUEUE) : EMPTY_QUEUE,
   );
 
   useEffect(() => {
@@ -102,91 +102,76 @@ export const Chat = memo(function Chat() {
     [chatId],
   );
 
-  const chatWindowRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const [showScrollButton, setShowScrollButton] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const loadMoreTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const autoScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const scrollerRef = useRef<HTMLElement | null>(null);
   const hasScrolledToBottom = useRef(false);
-  const prevScrollHeight = useRef<number>(0);
-  const prevContentHeight = useRef<number>(0);
   const isNearBottomRef = useRef(true);
+  const previousMessagesMetaRef = useRef<{
+    chatId: string | undefined;
+    firstMessageId: string | null;
+    length: number;
+  }>({
+    chatId: undefined,
+    firstMessageId: null,
+    length: 0,
+  });
+
+  const [firstItemIndex, setFirstItemIndex] = useState(INITIAL_FIRST_ITEM_INDEX);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [scrollerElement, setScrollerElement] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     hasScrolledToBottom.current = false;
-    prevScrollHeight.current = 0;
     isNearBottomRef.current = true;
+    setShowScrollButton(false);
+    setFirstItemIndex(INITIAL_FIRST_ITEM_INDEX);
+    previousMessagesMetaRef.current = {
+      chatId,
+      firstMessageId: null,
+      length: 0,
+    };
   }, [chatId]);
 
-  const { ref: loadMoreRef, inView } = useInView();
-
   useEffect(() => {
-    if (inView && hasNextPage && !isFetchingNextPage && fetchNextPage) {
-      if (loadMoreTimeoutRef.current) {
-        clearTimeout(loadMoreTimeoutRef.current);
-      }
-
-      loadMoreTimeoutRef.current = setTimeout(() => {
-        if (!isFetchingNextPage) {
-          if (chatWindowRef.current) {
-            prevScrollHeight.current = chatWindowRef.current.scrollHeight;
-          }
-          fetchNextPage();
-        }
-      }, 100);
+    if (chatId && messages.length > 0 && messages[0]?.chat_id !== chatId) {
+      return;
     }
 
-    return () => {
-      if (loadMoreTimeoutRef.current) {
-        clearTimeout(loadMoreTimeoutRef.current);
-      }
+    const firstMessageId = messages[0]?.id ?? null;
+    const previousMeta = previousMessagesMetaRef.current;
+
+    if (
+      previousMeta.chatId === chatId &&
+      previousMeta.length > 0 &&
+      previousMeta.firstMessageId !== null &&
+      firstMessageId !== null &&
+      firstMessageId !== previousMeta.firstMessageId &&
+      messages.length > previousMeta.length
+    ) {
+      const prependedCount = messages.length - previousMeta.length;
+      setFirstItemIndex((currentIndex) => currentIndex - prependedCount);
+    }
+
+    previousMessagesMetaRef.current = {
+      chatId,
+      firstMessageId,
+      length: messages.length,
     };
-  }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [chatId, messages]);
 
-  useLayoutEffect(() => {
-    const container = chatWindowRef.current;
-    if (container && prevScrollHeight.current > 0 && !isInitialLoading) {
-      const scrollDiff = container.scrollHeight - prevScrollHeight.current;
-      if (scrollDiff > 0) {
-        container.scrollTop += scrollDiff;
-      }
-      prevScrollHeight.current = 0;
+  const setVirtualScrollerRef = useCallback((ref: HTMLElement | null | Window) => {
+    if (ref instanceof HTMLElement) {
+      scrollerRef.current = ref;
+      setScrollerElement(ref);
+      return;
     }
-  }, [messages.length, isInitialLoading]);
 
-  useLayoutEffect(() => {
-    const container = chatWindowRef.current;
-    if (container && !isInitialLoading && messages.length > 0 && !hasScrolledToBottom.current) {
-      if (messages[0]?.chat_id !== chatId) return;
-      container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
-      hasScrolledToBottom.current = true;
-    }
-  }, [chatId, isInitialLoading, messages]);
-
-  useEffect(() => {
-    if (isStreaming && isNearBottomRef.current && chatWindowRef.current) {
-      chatWindowRef.current.scrollTo({
-        top: chatWindowRef.current.scrollHeight,
-        behavior: 'smooth',
-      });
-    }
-  }, [isStreaming, messages]);
-
-  const scrollToBottom = useCallback(() => {
-    const container = chatWindowRef.current;
-    if (container) {
-      setShowScrollButton(false);
-
-      container.scrollTo({
-        top: container.scrollHeight,
-        behavior: 'smooth',
-      });
-    }
+    scrollerRef.current = null;
+    setScrollerElement(null);
   }, []);
 
   const checkIfNearBottom = useCallback(() => {
-    const container = chatWindowRef.current;
+    const container = scrollerRef.current;
     if (!container) return false;
 
     const { scrollTop, scrollHeight, clientHeight } = container;
@@ -197,78 +182,78 @@ export const Chat = memo(function Chat() {
   }, []);
 
   const handleScroll = useCallback(() => {
-    const container = chatWindowRef.current;
-    if (!container) return;
-
     const isAtBottom = checkIfNearBottom();
     isNearBottomRef.current = isAtBottom;
-    const shouldShow = !isAtBottom;
-
-    setShowScrollButton((prev) => {
-      if (prev === shouldShow) return prev;
-      return shouldShow;
-    });
-
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
+    setShowScrollButton(!isAtBottom);
   }, [checkIfNearBottom]);
 
   useEffect(() => {
-    const container = chatWindowRef.current;
-    if (container) {
-      container.addEventListener('scroll', handleScroll, { passive: true });
-      handleScroll();
+    if (!scrollerElement) return;
 
-      const currentTimeoutRef = timeoutRef.current;
+    scrollerElement.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
 
-      return () => {
-        if (currentTimeoutRef) {
-          clearTimeout(currentTimeoutRef);
-        }
-        container.removeEventListener('scroll', handleScroll);
-      };
+    return () => {
+      scrollerElement.removeEventListener('scroll', handleScroll);
+    };
+  }, [handleScroll, scrollerElement]);
+
+  useLayoutEffect(() => {
+    if (isInitialLoading || messages.length === 0 || hasScrolledToBottom.current) {
+      return;
     }
-  }, [handleScroll]);
 
-  useEffect(() => {
-    const messagesContainer = messagesContainerRef.current;
-    const scrollContainer = chatWindowRef.current;
-    if (!messagesContainer || !scrollContainer) return;
+    if (messages[0]?.chat_id !== chatId) {
+      return;
+    }
 
-    prevContentHeight.current = messagesContainer.getBoundingClientRect().height;
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const newHeight = entry.contentRect.height;
-        const heightIncreased = newHeight > prevContentHeight.current;
-
-        if (heightIncreased && isNearBottomRef.current) {
-          if (autoScrollTimeoutRef.current) {
-            clearTimeout(autoScrollTimeoutRef.current);
-          }
-          autoScrollTimeoutRef.current = setTimeout(() => {
-            scrollContainer.scrollTo({
-              top: scrollContainer.scrollHeight,
-              behavior: 'smooth',
-            });
-          }, 100);
-        }
-
-        prevContentHeight.current = newHeight;
-      }
+    virtuosoRef.current?.scrollToIndex({
+      index: 'LAST',
+      align: 'end',
+      behavior: 'auto',
     });
 
-    resizeObserver.observe(messagesContainer);
-    return () => {
-      resizeObserver.disconnect();
-      if (autoScrollTimeoutRef.current) {
-        clearTimeout(autoScrollTimeoutRef.current);
-      }
-    };
-  }, [isInitialLoading, messages.length]);
+    hasScrolledToBottom.current = true;
+    handleScroll();
+  }, [chatId, handleScroll, isInitialLoading, messages]);
 
-  const lastBotMessageIndex = useMemo(() => findLastBotMessageIndex(messages), [messages]);
+  const scrollToBottom = useCallback(() => {
+    setShowScrollButton(false);
+    virtuosoRef.current?.scrollToIndex({
+      index: 'LAST',
+      align: 'end',
+      behavior: 'smooth',
+    });
+  }, []);
+
+  const followOutput = useCallback(
+    (isAtBottom: boolean) => {
+      if ((isStreaming || isLoading) && (isAtBottom || isNearBottomRef.current)) {
+        return 'smooth';
+      }
+
+      return false;
+    },
+    [isLoading, isStreaming],
+  );
+
+  const handleStartReached = useCallback(() => {
+    if (!hasScrolledToBottom.current || !hasNextPage || isFetchingNextPage || !fetchNextPage) {
+      return;
+    }
+
+    void fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+
+  const lastBotMessageId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const isAssistantMessage = messages[i].is_bot ?? messages[i].role === 'assistant';
+      if (isAssistantMessage) {
+        return messages[i].id;
+      }
+    }
+    return null;
+  }, [messages]);
   const latestUserMessageId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       if (!messages[i].is_bot) {
@@ -282,133 +267,192 @@ export const Chat = memo(function Chat() {
     pendingPermissionRequest &&
     pendingPermissionRequest.tool_name !== 'AskUserQuestion' &&
     pendingPermissionRequest.tool_name !== 'ExitPlanMode';
-  const lastBotMessage = lastBotMessageIndex >= 0 ? messages[lastBotMessageIndex] : undefined;
-  const lastBotIsStreaming = !!lastBotMessage && streamingMessageIdSet.has(lastBotMessage.id);
-  const showPermissionAtEnd =
-    canShowPermissionInline && (lastBotMessageIndex < 0 || lastBotIsStreaming);
+  const lastBotIsStreaming = !!lastBotMessageId && streamingMessageIdSet.has(lastBotMessageId);
+  const lastBotMessage = lastBotMessageId
+    ? messages.find((m) => m.id === lastBotMessageId)
+    : undefined;
+  const lastBotHasContent =
+    !!lastBotMessage &&
+    ((lastBotMessage.content_render?.events?.length ?? 0) > 0 || !!lastBotMessage.content_text);
+  const showPermissionAtEnd = canShowPermissionInline && (!lastBotMessageId || lastBotIsStreaming);
+
+  const renderMessage = useCallback(
+    (_index: number, msg: (typeof messages)[number]) => {
+      const messageIsStreaming = streamingMessageIdSet.has(msg.id);
+      const isBotMessage = msg.is_bot ?? msg.role === 'assistant';
+      const isLastBotMessage = isBotMessage && msg.id === lastBotMessageId;
+      const showPermissionAfterThis =
+        isLastBotMessage && !messageIsStreaming && canShowPermissionInline;
+      const localAttachmentIds =
+        msg.attachments?.reduce<string[]>((acc, attachment) => {
+          if (isBrowserObjectUrl(attachment.file_url)) acc.push(attachment.id);
+          return acc;
+        }, []) ?? [];
+      const isLatestUserMessage = !isBotMessage && msg.id === latestUserMessageId;
+      const shouldShowUploadingOverlay =
+        localAttachmentIds.length > 0 &&
+        (pendingUserMessageId === msg.id ||
+          (isLatestUserMessage && (pendingUserMessageId !== null || isLoading)));
+      const uploadingAttachmentIds = shouldShowUploadingOverlay ? localAttachmentIds : undefined;
+
+      return (
+        <div className="w-full lg:mx-auto lg:max-w-3xl">
+          <div className="message-item">
+            {isBotMessage ? (
+              <AssistantMessage
+                id={msg.id}
+                contentText={msg.content_text}
+                contentRender={msg.content_render}
+                attachments={msg.attachments}
+                isStreaming={messageIsStreaming}
+                createdAt={msg.created_at}
+                modelId={msg.model_id}
+                isLastBotMessageWithCommit={isLastBotMessage}
+                isLastBotMessage={isLastBotMessage && !messageIsStreaming}
+              />
+            ) : (
+              <UserMessage
+                contentRender={msg.content_render}
+                attachments={msg.attachments}
+                uploadingAttachmentIds={uploadingAttachmentIds}
+                isStreaming={messageIsStreaming}
+              />
+            )}
+          </div>
+          {showPermissionAfterThis && pendingPermissionRequest && (
+            <div className="px-4 sm:px-6">
+              <div className="flex items-start gap-3 sm:gap-4">
+                <div className="h-8 w-8 flex-shrink-0" />
+                <div className="mb-3 mt-1 min-w-0 flex-1">
+                  <ToolPermissionInline
+                    request={pendingPermissionRequest}
+                    onApprove={onPermissionApprove}
+                    onReject={onPermissionReject}
+                    isLoading={isPermissionLoading}
+                    error={permissionError}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    },
+    [
+      canShowPermissionInline,
+      isLoading,
+      isPermissionLoading,
+      lastBotMessageId,
+      latestUserMessageId,
+      onPermissionApprove,
+      onPermissionReject,
+      pendingPermissionRequest,
+      pendingUserMessageId,
+      permissionError,
+      streamingMessageIdSet,
+    ],
+  );
+
+  const listHeader = useMemo(() => {
+    if (!hasNextPage) {
+      return null;
+    }
+
+    return (
+      <div className="w-full lg:mx-auto lg:max-w-3xl">
+        <div className="flex h-4 items-center justify-center p-4">
+          {isFetchingNextPage && (
+            <div className="flex items-center gap-2 text-sm text-text-secondary dark:text-text-dark-secondary">
+              <Spinner size="xs" />
+              Loading older messages...
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }, [hasNextPage, isFetchingNextPage]);
+
+  const showThinking = isLoading || (isStreaming && !lastBotHasContent);
+
+  const listFooter = useMemo(() => {
+    if (!showThinking && !showPermissionAtEnd && pendingMessages.length === 0 && !error) {
+      return null;
+    }
+
+    return (
+      <div className="w-full lg:mx-auto lg:max-w-3xl">
+        {showThinking && <ThinkingIndicator />}
+        {showPermissionAtEnd && pendingPermissionRequest && (
+          <div className="px-4 sm:px-6">
+            <div className="flex items-start gap-3 sm:gap-4">
+              <div className="h-8 w-8 flex-shrink-0" />
+              <div className="mb-3 mt-1 min-w-0 flex-1">
+                <ToolPermissionInline
+                  request={pendingPermissionRequest}
+                  onApprove={onPermissionApprove}
+                  onReject={onPermissionReject}
+                  isLoading={isPermissionLoading}
+                  error={permissionError}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+        {pendingMessages.map((pending) => (
+          <PendingMessage
+            key={pending.id}
+            message={pending}
+            onCancel={handleCancelPending}
+            onEdit={handleEditPending}
+          />
+        ))}
+        {error && <ErrorMessage error={error} onDismiss={onDismissError} />}
+      </div>
+    );
+  }, [
+    error,
+    handleCancelPending,
+    handleEditPending,
+    isPermissionLoading,
+    onDismissError,
+    onPermissionApprove,
+    onPermissionReject,
+    pendingMessages,
+    pendingPermissionRequest,
+    permissionError,
+    showPermissionAtEnd,
+    showThinking,
+  ]);
+
+  const virtuosoComponents = useMemo(
+    () => ({
+      Header: () => listHeader,
+      Footer: () => listFooter,
+    }),
+    [listFooter, listHeader],
+  );
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col">
-      <div
-        ref={chatWindowRef}
-        className="scrollbar-thin scrollbar-thumb-border-secondary dark:scrollbar-thumb-border-dark hover:scrollbar-thumb-text-quaternary dark:hover:scrollbar-thumb-border-dark-hover scrollbar-track-transparent flex-1 overflow-y-auto overflow-x-hidden"
-      >
+      <div className="flex-1 overflow-hidden">
         {isInitialLoading && messages.length === 0 ? (
           <ChatSkeleton messageCount={3} className="py-4" />
         ) : (
-          // TODO(perf): For very long conversations, consider virtualizing this list with
-          // @tanstack/react-virtual or react-virtuoso. Currently relies on infinite pagination
-          // to cap loaded messages and CSS content-visibility:auto for paint savings, but React
-          // still reconciles every message component on each render.
-          <div ref={messagesContainerRef} className="w-full lg:mx-auto lg:max-w-3xl">
-            {hasNextPage && (
-              <div ref={loadMoreRef} className="flex h-4 items-center justify-center p-4">
-                {isFetchingNextPage && (
-                  <div className="flex items-center gap-2 text-sm text-text-secondary dark:text-text-dark-secondary">
-                    <Spinner size="xs" />
-                    Loading older messages...
-                  </div>
-                )}
-              </div>
-            )}
-            {messages.map((msg, index) => {
-              const messageIsStreaming = streamingMessageIdSet.has(msg.id);
-              const isBotMessage = msg.is_bot ?? msg.role === 'assistant';
-              const isLastBotMessage = isBotMessage && index === lastBotMessageIndex;
-              const showPermissionAfterThis =
-                isLastBotMessage && !messageIsStreaming && canShowPermissionInline;
-              const localAttachmentIds =
-                msg.attachments?.reduce<string[]>((acc, attachment) => {
-                  if (isBrowserObjectUrl(attachment.file_url)) acc.push(attachment.id);
-                  return acc;
-                }, []) ?? [];
-              const isLatestUserMessage = !isBotMessage && msg.id === latestUserMessageId;
-              const shouldShowUploadingOverlay =
-                localAttachmentIds.length > 0 &&
-                (pendingUserMessageId === msg.id ||
-                  (isLatestUserMessage && (pendingUserMessageId !== null || isLoading)));
-              const uploadingAttachmentIds = shouldShowUploadingOverlay
-                ? localAttachmentIds
-                : undefined;
-
-              return (
-                <React.Fragment key={msg.id}>
-                  <div className="message-item">
-                    {isBotMessage ? (
-                      <AssistantMessage
-                        id={msg.id}
-                        contentText={msg.content_text}
-                        contentRender={msg.content_render}
-                        attachments={msg.attachments}
-                        isStreaming={messageIsStreaming}
-                        createdAt={msg.created_at}
-                        modelId={msg.model_id}
-                        isLastBotMessageWithCommit={isLastBotMessage}
-                        isLastBotMessage={isLastBotMessage && !messageIsStreaming}
-                      />
-                    ) : (
-                      <UserMessage
-                        contentRender={msg.content_render}
-                        attachments={msg.attachments}
-                        uploadingAttachmentIds={uploadingAttachmentIds}
-                        isStreaming={messageIsStreaming}
-                      />
-                    )}
-                  </div>
-                  {showPermissionAfterThis && (
-                    <div className="px-4 sm:px-6">
-                      <div className="flex items-start gap-3 sm:gap-4">
-                        <div className="h-8 w-8 flex-shrink-0" />
-                        <div className="mb-3 mt-1 min-w-0 flex-1">
-                          <ToolPermissionInline
-                            request={pendingPermissionRequest}
-                            onApprove={onPermissionApprove}
-                            onReject={onPermissionReject}
-                            isLoading={isPermissionLoading}
-                            error={permissionError}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </React.Fragment>
-              );
-            })}
-            {showPermissionAtEnd && pendingPermissionRequest && (
-              <div className="px-4 sm:px-6">
-                <div className="flex items-start gap-3 sm:gap-4">
-                  <div className="h-8 w-8 flex-shrink-0" />
-                  <div className="mb-3 mt-1 min-w-0 flex-1">
-                    <ToolPermissionInline
-                      request={pendingPermissionRequest}
-                      onApprove={onPermissionApprove}
-                      onReject={onPermissionReject}
-                      isLoading={isPermissionLoading}
-                      error={permissionError}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-            {pendingMessages.map((pending) => (
-              <PendingMessage
-                key={pending.id}
-                message={pending}
-                onCancel={handleCancelPending}
-                onEdit={handleEditPending}
-              />
-            ))}
-            {error && <ErrorMessage error={error} onDismiss={onDismissError} />}
-          </div>
+          <Virtuoso
+            ref={virtuosoRef}
+            className="scrollbar-thin scrollbar-thumb-border-secondary dark:scrollbar-thumb-border-dark hover:scrollbar-thumb-text-quaternary dark:hover:scrollbar-thumb-border-dark-hover scrollbar-track-transparent h-full overflow-y-auto overflow-x-hidden"
+            data={messages}
+            firstItemIndex={firstItemIndex}
+            computeItemKey={(_index, msg) => msg.id}
+            itemContent={renderMessage}
+            startReached={handleStartReached}
+            followOutput={followOutput}
+            scrollerRef={setVirtualScrollerRef}
+            components={virtuosoComponents}
+          />
         )}
       </div>
       <div className="relative">
-        {isStreaming && (
-          <div className="sticky bottom-full z-10 w-full">
-            <LoadingIndicator />
-          </div>
-        )}
-
         {showScrollButton && <ScrollButton onClick={scrollToBottom} />}
 
         <div className="relative bg-surface pb-safe dark:bg-surface-dark">
