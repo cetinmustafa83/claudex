@@ -26,6 +26,7 @@ import { useChatInputMessageContext } from '@/hooks/useChatInputMessageContext';
 
 const SCROLL_THRESHOLD_PERCENT = 20;
 const INITIAL_FIRST_ITEM_INDEX = 1_000_000;
+const TOP_PAGINATION_ARM_VIEWPORT_MULTIPLIER = 1.5;
 
 export const Chat = memo(function Chat() {
   const { chatId } = useChatContext();
@@ -182,37 +183,25 @@ export const Chat = memo(function Chat() {
     setScrollerElement(null);
   }, []);
 
-  const checkIfNearBottom = useCallback(() => {
-    const container = scrollerRef.current;
-    if (!container) return false;
-
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    const thresholdPixels = (clientHeight * SCROLL_THRESHOLD_PERCENT) / 100;
-
-    return distanceFromBottom <= thresholdPixels;
-  }, []);
-
   const handleScroll = useCallback(() => {
     const container = scrollerRef.current;
     if (!container) return;
 
-    const { scrollTop } = container;
-    const isAtBottom = checkIfNearBottom();
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    const thresholdPixels = (clientHeight * SCROLL_THRESHOLD_PERCENT) / 100;
+    const isAtBottom = distanceFromBottom <= thresholdPixels;
     isNearBottomRef.current = isAtBottom;
+    const isScrollingUp = lastScrollTopRef.current !== null && scrollTop < lastScrollTopRef.current;
+    const isNearTop = scrollTop <= clientHeight * TOP_PAGINATION_ARM_VIEWPORT_MULTIPLIER;
 
-    if (
-      !allowTopPaginationRef.current &&
-      lastScrollTopRef.current !== null &&
-      scrollTop < lastScrollTopRef.current &&
-      !isAtBottom
-    ) {
+    if (!allowTopPaginationRef.current && isScrollingUp && isNearTop && !isAtBottom) {
       allowTopPaginationRef.current = true;
     }
 
     lastScrollTopRef.current = scrollTop;
     setShowScrollButton(!isAtBottom);
-  }, [checkIfNearBottom]);
+  }, []);
 
   useEffect(() => {
     if (!scrollerElement) return;
@@ -280,36 +269,45 @@ export const Chat = memo(function Chat() {
       return;
     }
 
+    allowTopPaginationRef.current = false;
     lastPaginatedMessageIdRef.current = firstMessageId;
     void fetchNextPage();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, messages]);
 
-  const lastBotMessageId = useMemo(() => {
+  const { lastBotMessage, latestUserMessageId } = useMemo(() => {
+    let latestAssistantMessage: (typeof messages)[number] | undefined;
+    let latestUserId: string | null = null;
+
     for (let i = messages.length - 1; i >= 0; i--) {
-      const isAssistantMessage = messages[i].is_bot ?? messages[i].role === 'assistant';
-      if (isAssistantMessage) {
-        return messages[i].id;
+      const message = messages[i];
+      const isAssistantMessage = message.is_bot ?? message.role === 'assistant';
+
+      if (!latestAssistantMessage && isAssistantMessage) {
+        latestAssistantMessage = message;
+      }
+
+      if (latestUserId === null && !isAssistantMessage) {
+        latestUserId = message.id;
+      }
+
+      if (latestAssistantMessage && latestUserId !== null) {
+        break;
       }
     }
-    return null;
+
+    return {
+      lastBotMessage: latestAssistantMessage,
+      latestUserMessageId: latestUserId,
+    };
   }, [messages]);
-  const latestUserMessageId = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (!messages[i].is_bot) {
-        return messages[i].id;
-      }
-    }
-    return null;
-  }, [messages]);
+
+  const lastBotMessageId = lastBotMessage?.id ?? null;
 
   const canShowPermissionInline =
     pendingPermissionRequest &&
     pendingPermissionRequest.tool_name !== 'AskUserQuestion' &&
     pendingPermissionRequest.tool_name !== 'ExitPlanMode';
   const lastBotIsStreaming = !!lastBotMessageId && streamingMessageIdSet.has(lastBotMessageId);
-  const lastBotMessage = lastBotMessageId
-    ? messages.find((m) => m.id === lastBotMessageId)
-    : undefined;
   const lastBotHasContent =
     !!lastBotMessage &&
     ((lastBotMessage.content_render?.events?.length ?? 0) > 0 || !!lastBotMessage.content_text);
