@@ -26,6 +26,7 @@ import { useChatInputMessageContext } from '@/hooks/useChatInputMessageContext';
 
 const SCROLL_THRESHOLD_PERCENT = 20;
 const INITIAL_FIRST_ITEM_INDEX = 1_000_000;
+const TOP_PAGINATION_ARM_VIEWPORT_MULTIPLIER = 1.5;
 
 export const Chat = memo(function Chat() {
   const { chatId } = useChatContext();
@@ -197,16 +198,13 @@ export const Chat = memo(function Chat() {
     const container = scrollerRef.current;
     if (!container) return;
 
-    const { scrollTop } = container;
+    const { scrollTop, clientHeight } = container;
     const isAtBottom = checkIfNearBottom();
     isNearBottomRef.current = isAtBottom;
+    const isScrollingUp = lastScrollTopRef.current !== null && scrollTop < lastScrollTopRef.current;
+    const isNearTop = scrollTop <= clientHeight * TOP_PAGINATION_ARM_VIEWPORT_MULTIPLIER;
 
-    if (
-      !allowTopPaginationRef.current &&
-      lastScrollTopRef.current !== null &&
-      scrollTop < lastScrollTopRef.current &&
-      !isAtBottom
-    ) {
+    if (!allowTopPaginationRef.current && isScrollingUp && isNearTop && !isAtBottom) {
       allowTopPaginationRef.current = true;
     }
 
@@ -280,6 +278,7 @@ export const Chat = memo(function Chat() {
       return;
     }
 
+    allowTopPaginationRef.current = false;
     lastPaginatedMessageIdRef.current = firstMessageId;
     void fetchNextPage();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, messages]);
