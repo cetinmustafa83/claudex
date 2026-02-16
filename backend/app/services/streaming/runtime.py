@@ -9,11 +9,11 @@ from functools import partial
 from typing import Any
 from uuid import UUID, uuid4
 
-from redis.asyncio import Redis
 from sqlalchemy import select
 
 from app.constants import REDIS_KEY_CHAT_CONTEXT_USAGE, REDIS_KEY_CHAT_STREAM_LIVE
 from app.core.config import get_settings
+from app.utils.cache import CacheStore, MemoryStore, get_store
 from app.db.session import SessionLocal
 from app.models.db_models import (
     Chat,
@@ -39,7 +39,7 @@ from app.services.streaming.types import (
 )
 from app.services.claude_session_registry import session_registry
 from app.services.user import UserService
-from app.utils.redis import redis_connection
+from app.utils.cache import cache_connection
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -150,30 +150,33 @@ class ChatStreamRuntime:
         self.message_service = MessageService(session_factory=session_factory)
         self._event_buffer: list[tuple[str, dict[str, Any], dict[str, Any] | None]] = []
 
-        self.redis: Redis[str] | None = None
+        self.cache: CacheStore | None = None
         self._cancel_event: asyncio.Event | None = None
         self._cancelled: bool = False
 
     async def _connect_redis(self) -> None:
         try:
-            self.redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+            self.cache = get_store()
         except Exception as exc:
             logger.error("Failed to connect to Redis: %s", exc)
-            if self.redis:
+            if self.cache:
                 try:
-                    await self.redis.close()
+                    await self.cache.close()
                 except Exception:
                     logger.debug("Error closing Redis client during connect rollback")
-            self.redis = None
+            self.cache = None
 
     async def _close_redis(self) -> None:
-        if not self.redis:
+        if not self.cache:
+            return
+        if isinstance(self.cache, MemoryStore):
+            self.cache = None
             return
         try:
-            await self.redis.close()
+            await self.cache.close()
         except Exception as exc:
             logger.debug("Error closing Redis client: %s", exc)
-        self.redis = None
+        self.cache = None
 
     async def run(
         self, ai_service: ClaudeAgentService, stream: AsyncIterator[StreamEvent]
@@ -330,10 +333,10 @@ class ChatStreamRuntime:
         self.last_seq = seq
 
     async def _signal_redis(self) -> None:
-        if not self.redis:
+        if not self.cache:
             return
         try:
-            await self.redis.publish(
+            await self.cache.publish(
                 REDIS_KEY_CHAT_STREAM_LIVE.format(chat_id=self.chat_id),
                 "flush",
             )
@@ -442,8 +445,8 @@ class ChatStreamRuntime:
 
     async def _process_next_queued(self) -> bool:
         try:
-            async with redis_connection() as redis:
-                queue_service = QueueService(redis)
+            async with cache_connection() as cache:
+                queue_service = QueueService(cache)
                 next_msg = await queue_service.pop_next_message(self.chat_id)
             if not next_msg:
                 return False
@@ -524,7 +527,7 @@ class ChatStreamRuntime:
 
     async def _emit_context_usage(self, ai_service: ClaudeAgentService) -> None:
         usage = ai_service.get_usage()
-        if not usage or not self.redis:
+        if not usage or not self.cache:
             return
 
         token_usage = (
@@ -556,7 +559,7 @@ class ChatStreamRuntime:
                     db.add(chat)
                     await db.commit()
 
-            await self.redis.setex(
+            await self.cache.setex(
                 REDIS_KEY_CHAT_CONTEXT_USAGE.format(chat_id=self.chat_id),
                 settings.CONTEXT_USAGE_CACHE_TTL_SECONDS,
                 json.dumps(context_data),

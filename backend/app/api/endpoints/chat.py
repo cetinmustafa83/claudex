@@ -14,7 +14,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from redis.exceptions import RedisError
+from app.utils.cache import CacheError
 from sqlalchemy.exc import SQLAlchemyError
 from sse_starlette.sse import EventSourceResponse
 
@@ -60,7 +60,7 @@ from app.services.exceptions import (
 )
 from app.services.permission_manager import PermissionManager
 from app.services.queue import QueueService
-from app.utils.redis import redis_connection
+from app.utils.cache import cache_connection
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ async def create_chat(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database error while creating chat",
         )
-    except RedisError as e:
+    except CacheError as e:
         logger.error("Redis error creating chat: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -226,9 +226,9 @@ async def get_chat_context_usage(
     chat = await chat_service.get_chat(chat_id, current_user)
 
     try:
-        async with redis_connection() as redis:
+        async with cache_connection() as cache:
             cache_key = REDIS_KEY_CHAT_CONTEXT_USAGE.format(chat_id=str(chat_id))
-            cached = await redis.get(cache_key)
+            cached = await cache.get(cache_key)
             if cached:
                 data = json.loads(cached)
                 return ContextUsage(
@@ -238,7 +238,7 @@ async def get_chat_context_usage(
                     ),
                     percentage=data.get("percentage", 0.0),
                 )
-    except (RedisError, json.JSONDecodeError, KeyError) as e:
+    except (CacheError, json.JSONDecodeError, KeyError) as e:
         logger.warning("Failed to get context usage from cache: %s", e)
 
     tokens_used = chat.context_token_usage or 0
@@ -552,8 +552,8 @@ async def queue_message(
     queue_attachments = [dict(item) for item in attachments] if attachments else None
 
     try:
-        async with redis_connection() as redis:
-            queue_service = QueueService(redis)
+        async with cache_connection() as cache:
+            queue_service = QueueService(cache)
             return await queue_service.upsert_message(
                 str(chat_id),
                 content,
@@ -562,7 +562,7 @@ async def queue_message(
                 thinking_mode=thinking_mode,
                 attachments=queue_attachments,
             )
-    except RedisError as e:
+    except CacheError as e:
         logger.error("Redis error queueing message: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -582,10 +582,10 @@ async def get_queue(
     await _ensure_chat_access(chat_id, chat_service, current_user)
 
     try:
-        async with redis_connection() as redis:
-            queue_service = QueueService(redis)
+        async with cache_connection() as cache:
+            queue_service = QueueService(cache)
             return await queue_service.get_message(str(chat_id))
-    except RedisError as e:
+    except CacheError as e:
         logger.error("Redis error getting queue: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -606,8 +606,8 @@ async def update_queued_message(
     await _ensure_chat_access(chat_id, chat_service, current_user)
 
     try:
-        async with redis_connection() as redis:
-            queue_service = QueueService(redis)
+        async with cache_connection() as cache:
+            queue_service = QueueService(cache)
             result = await queue_service.update_message(str(chat_id), update.content)
             if result is None:
                 raise HTTPException(
@@ -615,7 +615,7 @@ async def update_queued_message(
                     detail="No queued message found",
                 )
             return result
-    except RedisError as e:
+    except CacheError as e:
         logger.error("Redis error updating queued message: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -635,15 +635,15 @@ async def clear_queue(
     await _ensure_chat_access(chat_id, chat_service, current_user)
 
     try:
-        async with redis_connection() as redis:
-            queue_service = QueueService(redis)
+        async with cache_connection() as cache:
+            queue_service = QueueService(cache)
             success = await queue_service.clear_queue(str(chat_id))
             if not success:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="No queued message found",
                 )
-    except RedisError as e:
+    except CacheError as e:
         logger.error("Redis error clearing queue: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

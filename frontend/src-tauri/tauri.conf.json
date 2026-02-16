@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.claudex.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev:desktop",
+    "beforeDevCommand": "node ../desktop/run_build.mjs && npm run dev:desktop",
     "devUrl": "http://localhost:3000",
-    "beforeBuildCommand": "npm run build -- --mode desktop",
+    "beforeBuildCommand": "node ../desktop/run_build.mjs && npm run build -- --mode desktop",
     "frontendDist": "../dist"
   },
   "app": {
@@ -29,6 +29,6 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.icns", "icons/icon.png"],
-    "resources": ["../../docker-compose.desktop.yml"]
+    "resources": ["../backend-sidecar/"]
   }
 }

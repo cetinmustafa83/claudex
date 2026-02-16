@@ -1,15 +1,28 @@
 import logging
+import platform
 import sys
 from datetime import datetime, timezone
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationInfo, field_validator
+from pydantic import ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings
 from pythonjsonlogger import jsonlogger
 
 
+def _desktop_data_dir() -> Path:
+    system = platform.system()
+    if system == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "com.claudex.app"
+    if system == "Windows":
+        return Path.home() / "AppData" / "Roaming" / "com.claudex.app"
+    return Path.home() / ".local" / "share" / "com.claudex.app"
+
+
 class Settings(BaseSettings):
+    DESKTOP_MODE: bool = False
+
     BASE_URL: str = "http://localhost:8080"
     FRONTEND_URL: str = "http://localhost:3000"
     PROJECT_NAME: str = "AI Generation API"
@@ -71,6 +84,36 @@ class Settings(BaseSettings):
         if len(v) < 32:
             raise ValueError("SECRET_KEY must be at least 32 characters long")
         return v
+
+    @model_validator(mode="after")
+    def apply_desktop_defaults(self) -> "Settings":
+        if not self.DESKTOP_MODE:
+            return self
+        data_dir = _desktop_data_dir()
+        data_dir.mkdir(parents=True, exist_ok=True)
+        default_db = f"sqlite+aiosqlite:///{(data_dir / 'claudex.db').as_posix()}"
+        if (
+            self.DATABASE_URL
+            == "postgresql+asyncpg://postgres:postgres@localhost:5432/claudex"
+        ):
+            self.DATABASE_URL = default_db
+        if self.STORAGE_PATH == "/app/storage":
+            self.STORAGE_PATH = str(data_dir / "storage")
+            Path(self.STORAGE_PATH).mkdir(parents=True, exist_ok=True)
+        origins = (
+            self.ALLOWED_ORIGINS
+            if isinstance(self.ALLOWED_ORIGINS, list)
+            else [self.ALLOWED_ORIGINS]
+        )
+        for origin in [
+            "tauri://localhost",
+            "https://tauri.localhost",
+            "http://tauri.localhost",
+        ]:
+            if origin not in origins:
+                origins.append(origin)
+        self.ALLOWED_ORIGINS = origins
+        return self
 
     @field_validator("SESSION_SECRET_KEY", mode="before")
     @classmethod

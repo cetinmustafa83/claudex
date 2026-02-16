@@ -36,6 +36,7 @@ function AppContent() {
   const setAuthenticated = useAuthStore((state) => state.setAuthenticated);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const hasToken = !!authService.getToken();
+  const isSessionAuthenticated = isAuthenticated && hasToken;
   const { data: user, isLoading } = useCurrentUserQuery({
     enabled: hasToken,
     retry: false,
@@ -50,7 +51,7 @@ function AppContent() {
   }, [user, hasToken, isAuthenticated, setAuthenticated]);
 
   const { data: chatsData, isLoading: isChatsLoading } = useInfiniteChatsQuery({
-    enabled: isAuthenticated,
+    enabled: isSessionAuthenticated,
   });
 
   const allChats = useMemo(
@@ -61,7 +62,7 @@ function AppContent() {
   useStreamRestoration({
     chats: allChats,
     isLoading: isChatsLoading,
-    enabled: isAuthenticated,
+    enabled: isSessionAuthenticated,
   });
 
   const showLoading = hasToken && isLoading;
@@ -72,7 +73,7 @@ function AppContent() {
         <Route
           path="/login"
           element={
-            <AuthRoute isAuthenticated={isAuthenticated} requireAuth={false}>
+            <AuthRoute isAuthenticated={isSessionAuthenticated} requireAuth={false}>
               <LoginPage />
             </AuthRoute>
           }
@@ -80,7 +81,7 @@ function AppContent() {
         <Route
           path="/signup"
           element={
-            <AuthRoute isAuthenticated={isAuthenticated} requireAuth={false}>
+            <AuthRoute isAuthenticated={isSessionAuthenticated} requireAuth={false}>
               <SignupPage />
             </AuthRoute>
           }
@@ -89,7 +90,7 @@ function AppContent() {
         <Route
           path="/forgot-password"
           element={
-            <AuthRoute isAuthenticated={isAuthenticated} requireAuth={false}>
+            <AuthRoute isAuthenticated={isSessionAuthenticated} requireAuth={false}>
               <ForgotPasswordPage />
             </AuthRoute>
           }
@@ -97,7 +98,7 @@ function AppContent() {
         <Route
           path="/reset-password"
           element={
-            <AuthRoute isAuthenticated={isAuthenticated} requireAuth={false}>
+            <AuthRoute isAuthenticated={isSessionAuthenticated} requireAuth={false}>
               <ResetPasswordPage />
             </AuthRoute>
           }
@@ -118,7 +119,7 @@ function AppContent() {
           path="/chat/:chatId"
           element={
             <AuthRoute
-              isAuthenticated={isAuthenticated}
+              isAuthenticated={isSessionAuthenticated}
               requireAuth={true}
               showLoading={showLoading}
             >
@@ -130,7 +131,7 @@ function AppContent() {
           path="/settings"
           element={
             <AuthRoute
-              isAuthenticated={isAuthenticated}
+              isAuthenticated={isSessionAuthenticated}
               requireAuth={true}
               showLoading={showLoading}
             >
@@ -197,12 +198,27 @@ export default function App() {
   return (
     <BrowserRouter>
       {backendReady === false && (
-        <div className="fixed inset-x-0 top-0 z-[100] bg-surface-tertiary px-4 py-2 text-center text-xs font-medium text-text-primary dark:bg-surface-dark-tertiary dark:text-text-dark-primary">
-          Backend not running. Start it with{' '}
-          <code className="rounded bg-surface-active px-1 py-0.5 text-[11px] dark:bg-surface-dark-active">
-            docker compose -p claudex-desktop -f docker-compose.desktop.yml up -d --remove-orphans
-          </code>
-          .
+        <div className="fixed inset-x-0 top-0 z-[100] flex items-center justify-center gap-2 bg-surface-tertiary px-4 py-2 text-center text-xs font-medium text-text-primary dark:bg-surface-dark-tertiary dark:text-text-dark-primary">
+          <svg
+            className="h-3 w-3 animate-spin text-text-quaternary dark:text-text-dark-quaternary"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+          Starting backend...
         </div>
       )}
       <Toaster {...toasterConfig} />

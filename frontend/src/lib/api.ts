@@ -1,4 +1,5 @@
 import { authStorage } from '@/utils/storage';
+import { invalidateSessionAndRedirect } from '@/utils/authSession';
 
 type RequestMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
@@ -57,6 +58,8 @@ async function performTokenRefresh(baseURL: string): Promise<TokenResponse> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refresh_token: refreshToken }),
+  }).catch(() => {
+    throw new RefreshTokenError(0);
   });
 
   if (!response.ok) {
@@ -88,7 +91,15 @@ function shouldInvalidateSession(error: unknown): boolean {
   if (!(error instanceof RefreshTokenError)) {
     return false;
   }
-  return error.status === 401 || error.status === 403;
+  if (error.status === 0) {
+    return false;
+  }
+  if (error.status >= 500) {
+    return false;
+  }
+  // Desktop reinstalls can leave stale refresh tokens in local storage while the backend
+  // identity/session store resets. Treat refresh 4xx as terminal to break retry loops.
+  return error.status >= 400 && error.status < 500;
 }
 
 const extractErrorMessage = async (response: Response): Promise<string> => {
@@ -164,8 +175,7 @@ class APIClient {
           return this.request<T>(endpoint, method, options, additionalHeaders, true);
         } catch (error) {
           if (shouldInvalidateSession(error)) {
-            authStorage.clearAuth();
-            window.location.href = '/login';
+            invalidateSessionAndRedirect();
             throw new Error('Session expired');
           }
           throw error;
@@ -215,8 +225,7 @@ class APIClient {
           return this.getBlob(endpoint, signal, true);
         } catch (error) {
           if (shouldInvalidateSession(error)) {
-            authStorage.clearAuth();
-            window.location.href = '/login';
+            invalidateSessionAndRedirect();
             throw new Error('Session expired');
           }
           throw error;

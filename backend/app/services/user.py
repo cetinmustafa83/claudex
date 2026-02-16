@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timezone
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -16,10 +16,7 @@ from app.models.schemas import UserSettingsResponse
 from app.models.types import InstalledPluginDict, JSONValue
 from app.services.db import BaseDbService, SessionFactoryType
 from app.services.exceptions import ErrorCode, UserException
-from app.utils.redis import redis_connection
-
-if TYPE_CHECKING:
-    from redis.asyncio import Redis
+from app.utils.cache import CacheStore, cache_connection
 
 settings = get_settings()
 
@@ -45,9 +42,9 @@ class UserService(BaseDbService[UserSettings]):
                 )
             seen_names.add(name)
 
-    async def invalidate_settings_cache(self, redis: Redis[str], user_id: UUID) -> None:
+    async def invalidate_settings_cache(self, cache: CacheStore, user_id: UUID) -> None:
         cache_key = REDIS_KEY_USER_SETTINGS.format(user_id=user_id)
-        await redis.delete(cache_key)
+        await cache.delete(cache_key)
 
     async def get_user_settings(
         self,
@@ -74,11 +71,11 @@ class UserService(BaseDbService[UserSettings]):
         self,
         user_id: UUID,
         db: AsyncSession | None = None,
-        redis: Redis[str] | None = None,
+        cache: CacheStore | None = None,
     ) -> UserSettingsResponse:
         cache_key = REDIS_KEY_USER_SETTINGS.format(user_id=user_id)
-        if redis:
-            cached = await redis.get(cache_key)
+        if cache:
+            cached = await cache.get(cache_key)
             if cached:
                 cached_response: UserSettingsResponse = (
                     UserSettingsResponse.model_validate_json(cached)
@@ -89,8 +86,8 @@ class UserService(BaseDbService[UserSettings]):
         response: UserSettingsResponse = UserSettingsResponse.model_validate(
             user_settings
         )
-        if redis:
-            await redis.setex(
+        if cache:
+            await cache.setex(
                 cache_key,
                 settings.USER_SETTINGS_CACHE_TTL_SECONDS,
                 response.model_dump_json(),
@@ -137,8 +134,8 @@ class UserService(BaseDbService[UserSettings]):
     ) -> None:
         await db.commit()
         await db.refresh(user_settings)
-        async with redis_connection() as redis:
-            await self.invalidate_settings_cache(redis, user_id)
+        async with cache_connection() as cache:
+            await self.invalidate_settings_cache(cache, user_id)
 
     async def commit_settings_with_cleanup(
         self,

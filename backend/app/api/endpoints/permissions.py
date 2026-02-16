@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import ValidationError
-from redis.exceptions import RedisError
+from app.utils.cache import CacheError
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.constants import REDIS_KEY_CHAT_STREAM_LIVE
@@ -20,7 +20,7 @@ from app.models.schemas import (
 from app.services.chat import ChatService
 from app.services.permission_manager import PermissionManager
 from app.services.streaming.types import StreamEnvelope
-from app.utils.redis import redis_connection
+from app.utils.cache import cache_connection
 
 router = APIRouter()
 settings = get_settings()
@@ -90,12 +90,12 @@ async def create_permission_request(
                 kind="permission_request",
                 payload=render_payload,
             )
-            async with redis_connection() as redis:
-                await redis.publish(
+            async with cache_connection() as cache:
+                await cache.publish(
                     REDIS_KEY_CHAT_STREAM_LIVE.format(chat_id=chat_id_str),
                     json.dumps(envelope, ensure_ascii=False),
                 )
-    except (RedisError, SQLAlchemyError) as exc:
+    except (CacheError, SQLAlchemyError) as exc:
         PermissionManager.remove(request_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

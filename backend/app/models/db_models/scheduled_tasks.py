@@ -2,11 +2,11 @@ import uuid
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy import Enum as SQLAlchemyEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base_class import Base
+from app.db.base_class import Base, PG_GEN_UUID
 from app.db.types import GUID
 
 from .enums import RecurrenceType, TaskExecutionStatus, TaskStatus
@@ -19,7 +19,7 @@ class ScheduledTask(Base):
         GUID(),
         primary_key=True,
         default=uuid.uuid4,
-        server_default=text("gen_random_uuid()"),
+        server_default=PG_GEN_UUID,
     )
     user_id: Mapped[UUID] = mapped_column(
         GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
@@ -68,7 +68,7 @@ class TaskExecution(Base):
         GUID(),
         primary_key=True,
         default=uuid.uuid4,
-        server_default=text("gen_random_uuid()"),
+        server_default=PG_GEN_UUID,
     )
     task_id: Mapped[UUID] = mapped_column(
         GUID(),

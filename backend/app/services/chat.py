@@ -4,7 +4,7 @@ import logging
 import math
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import exists, func, select, update
@@ -50,11 +50,9 @@ from app.services.claude_session_registry import session_registry
 from app.services.storage import StorageService
 from app.services.user import UserService
 
-if TYPE_CHECKING:
-    from redis.asyncio.client import PubSub
-
+from app.utils.cache import CachePubSub
 from app.utils.message_events import MessageEventParser
-from app.utils.redis import redis_connection, redis_pubsub
+from app.utils.cache import cache_connection, cache_pubsub
 from app.utils.attachment_urls import AttachmentURL
 from app.utils.validators import APIKeyValidationError, validate_model_api_keys
 
@@ -512,7 +510,7 @@ class ChatService(BaseDbService[Chat]):
         self,
         chat_id: UUID,
         last_seq: int,
-        live_pubsub: "PubSub",
+        live_pubsub: CachePubSub,
     ) -> AsyncIterator[dict[str, Any]]:
         while True:
             message = await live_pubsub.get_message(
@@ -563,9 +561,9 @@ class ChatService(BaseDbService[Chat]):
         last_seq = after_seq
 
         try:
-            async with redis_connection() as redis:
+            async with cache_connection() as cache:
                 channel = REDIS_KEY_CHAT_STREAM_LIVE.format(chat_id=chat_id)
-                async with redis_pubsub(redis, channel) as live_pubsub:
+                async with cache_pubsub(cache, channel) as live_pubsub:
                     async for item in self._replay_stream_backlog(chat_id, after_seq):
                         yield item
                         try:

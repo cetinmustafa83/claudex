@@ -9,7 +9,7 @@ from app.models.db_models import User
 from app.models.schemas import UserSettingsBase, UserSettingsResponse
 from app.services.exceptions import UserException
 from app.services.user import DuplicateProviderNameError, UserService
-from app.utils.redis import redis_connection
+from app.utils.cache import cache_connection
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +23,9 @@ async def get_user_settings(
 ) -> UserSettingsResponse:
     logger.info(f"[GET_SETTINGS] Fetching settings for user {current_user.id}")
     try:
-        async with redis_connection() as redis:
+        async with cache_connection() as cache:
             response = await user_service.get_user_settings_response(
-                current_user.id, redis=redis
+                current_user.id, cache=cache
             )
             agent_names = [a.name for a in (response.custom_agents or [])]
             logger.info(f"[GET_SETTINGS] Returning agents: {agent_names}")
@@ -49,8 +49,8 @@ async def update_user_settings(
         user_settings = await user_service.update_user_settings(
             user_id=current_user.id, settings_update=update_data, db=db
         )
-        async with redis_connection() as redis:
-            await user_service.invalidate_settings_cache(redis, current_user.id)
+        async with cache_connection() as cache:
+            await user_service.invalidate_settings_cache(cache, current_user.id)
         response: UserSettingsResponse = UserSettingsResponse.model_validate(
             user_settings
         )

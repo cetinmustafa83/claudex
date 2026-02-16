@@ -3,7 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from app.models.types import (
@@ -17,7 +17,7 @@ from app.models.types import (
     InstalledPluginDict,
 )
 
-from app.db.base_class import Base
+from app.db.base_class import Base, PG_GEN_UUID
 from app.db.types import GUID, EncryptedJSON, EncryptedString
 
 
@@ -28,7 +28,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         GUID(),
         primary_key=True,
         default=uuid.uuid4,
-        server_default=text("gen_random_uuid()"),
+        server_default=PG_GEN_UUID,
     )
     email: Mapped[str] = mapped_column(String(length=320), unique=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(length=256), nullable=False)
@@ -72,7 +72,7 @@ class UserSettings(Base):
         GUID(),
         primary_key=True,
         default=uuid.uuid4,
-        server_default=text("gen_random_uuid()"),
+        server_default=PG_GEN_UUID,
     )
     user_id: Mapped[UUID] = mapped_column(
         GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
