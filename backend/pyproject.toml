@@ -128,10 +128,16 @@ exclude = [
 "email-validator" = "email_validator"
 "fastapi-users" = "fastapi_users"
 "python-multipart" = "multipart"
+"pydantic-settings" = "pydantic_settings"
+"claude-agent-sdk" = "claude_agent_sdk"
+"prometheus-fastapi-instrumentator" = "prometheus_fastapi_instrumentator"
+"sse-starlette" = "sse_starlette"
+"anthropic-bridge" = "anthropic_bridge"
 
 [tool.deptry.per_rule_ignores]
 DEP002 = [
     "asyncpg",
+    "aiosqlite",
     "psycopg",
     "python-multipart",
     "bcrypt",
