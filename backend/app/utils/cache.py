@@ -4,7 +4,7 @@ import time
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast
 
 from app.core.config import get_settings
 
@@ -15,11 +15,10 @@ try:
     from redis.exceptions import RedisError as CacheError
 except ModuleNotFoundError:
 
-    class CacheError(OSError):  # type: ignore[no-redef]
+    class CacheError(OSError):  # type: ignore[no-redef]  # mypy can't resolve conditional try/except class definitions
         pass
 
 
-@runtime_checkable
 class CachePubSub(Protocol):
     async def subscribe(self, channel: str) -> None: ...
     async def unsubscribe(self, channel: str) -> None: ...
@@ -29,7 +28,6 @@ class CachePubSub(Protocol):
     async def close(self) -> None: ...
 
 
-@runtime_checkable
 class CacheStore(Protocol):
     async def get(self, key: str) -> str | None: ...
     async def set(self, key: str, value: str, ex: int | None = None) -> None: ...
@@ -69,23 +67,35 @@ class MemoryPubSub:
 
 
 class MemoryStore:
+    _instance: "MemoryStore | None" = None
+
+    @classmethod
+    def get_instance(cls) -> "MemoryStore":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
     def __init__(self) -> None:
         self._data: dict[str, str] = {}
         self._expiry: dict[str, float] = {}
         self._subscribers: dict[str, list[MemoryPubSub]] = defaultdict(list)
         self._timers: dict[str, asyncio.TimerHandle] = {}
 
-    def _is_expired(self, key: str) -> bool:
-        if key in self._expiry:
-            if time.monotonic() >= self._expiry[key]:
-                self._data.pop(key, None)
-                self._expiry.pop(key, None)
-                self._timers.pop(key, None)
-                return True
+    def _evict_if_expired(self, key: str) -> bool:
+        if key in self._expiry and time.monotonic() >= self._expiry[key]:
+            self._remove_key(key)
+            return True
         return False
 
+    def _remove_key(self, key: str) -> None:
+        self._data.pop(key, None)
+        self._expiry.pop(key, None)
+        timer = self._timers.pop(key, None)
+        if timer is not None:
+            timer.cancel()
+
     async def get(self, key: str) -> str | None:
-        if self._is_expired(key):
+        if self._evict_if_expired(key):
             return None
         return self._data.get(key)
 
@@ -104,32 +114,22 @@ class MemoryStore:
         if old_timer is not None:
             old_timer.cancel()
         loop = asyncio.get_running_loop()
-        self._timers[key] = loop.call_later(ttl, self._expire_key, key)
-
-    def _expire_key(self, key: str) -> None:
-        self._data.pop(key, None)
-        self._expiry.pop(key, None)
-        self._timers.pop(key, None)
+        self._timers[key] = loop.call_later(ttl, self._remove_key, key)
 
     async def delete(self, *keys: str) -> int:
         count = 0
         for key in keys:
-            if self._data.pop(key, None) is not None:
+            if key in self._data:
                 count += 1
-            self._expiry.pop(key, None)
-            timer = self._timers.pop(key, None)
-            if timer is not None:
-                timer.cancel()
+            self._remove_key(key)
         return count
 
     async def getdel(self, key: str) -> str | None:
-        if self._is_expired(key):
+        if self._evict_if_expired(key):
             return None
         value = self._data.pop(key, None)
-        self._expiry.pop(key, None)
-        timer = self._timers.pop(key, None)
-        if timer is not None:
-            timer.cancel()
+        if value is not None:
+            self._remove_key(key)
         return value
 
     async def publish(self, channel: str, message: str) -> int:
@@ -153,33 +153,29 @@ class MemoryStore:
         return True
 
     async def close(self) -> None:
-        pass
-
-
-_memory_store: dict[str, MemoryStore] = {}
-
-
-def get_store() -> CacheStore:
-    if settings.DESKTOP_MODE:
-        if "default" not in _memory_store:
-            _memory_store["default"] = MemoryStore()
-        return _memory_store["default"]
-    from redis.asyncio import Redis
-
-    return Redis.from_url(settings.REDIS_URL, decode_responses=True)  # type: ignore[return-value]
+        for timer in self._timers.values():
+            timer.cancel()
+        self._timers.clear()
+        self._data.clear()
+        self._expiry.clear()
+        self._subscribers.clear()
 
 
 @asynccontextmanager
 async def cache_connection() -> AsyncIterator[CacheStore]:
-    store = get_store()
+    if settings.DESKTOP_MODE:
+        yield MemoryStore.get_instance()
+        return
+    from redis.asyncio import Redis
+
+    store = cast(CacheStore, Redis.from_url(settings.REDIS_URL, decode_responses=True))
     try:
         yield store
     finally:
-        if not settings.DESKTOP_MODE:
-            try:
-                await store.close()
-            except Exception as e:
-                logger.warning("Error closing Redis connection: %s", e)
+        try:
+            await store.close()
+        except Exception as e:
+            logger.warning("Error closing Redis connection: %s", e)
 
 
 @asynccontextmanager
