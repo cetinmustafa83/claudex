@@ -117,6 +117,8 @@
 
 ### Re-render Optimization
 - Zustand selectors for action functions (used only in callbacks, not in JSX) must use `useStore.getState().action()` at the call site instead of subscribing with `useStore((s) => s.action)` — subscriptions cause re-renders when the store updates
+- Do not wrap Zustand store `set(...)` calls in `startTransition` inside store definitions/actions; use normal synchronous `set` in stores, and only use `startTransition` from React components/hooks when needed
+- Zustand selectors passed to `useStore(...)` must return stable references; never create new objects/arrays/`Set`/`Map` inside the selector. Subscribe to stable slices and derive new collections with `useMemo`
 - Use `Set` instead of arrays for membership checks in render loops — wrap with `useMemo(() => new Set(arr), [arr])` and use `.has()` instead of `.includes()`
 - Do not wrap trivial expressions in `useMemo` (e.g., `useMemo(() => x || [], [x])`) — use direct expressions (`x ?? []`)
 - Hoist regex patterns to module-level constants — never create RegExp inside loops or frequently-called functions
