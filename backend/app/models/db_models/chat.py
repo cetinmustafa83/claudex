@@ -11,13 +11,12 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    text,
 )
 from sqlalchemy import Enum as SQLAlchemyEnum
 from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base_class import Base
+from app.db.base_class import Base, PG_GEN_UUID
 from app.db.types import GUID
 
 from .enums import AttachmentType, MessageRole, MessageStreamStatus
@@ -30,7 +29,7 @@ class Chat(Base):
         GUID(),
         primary_key=True,
         default=uuid.uuid4,
-        server_default=text("gen_random_uuid()"),
+        server_default=PG_GEN_UUID,
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     user_id: Mapped[UUID] = mapped_column(
@@ -83,7 +82,7 @@ class Message(Base):
         GUID(),
         primary_key=True,
         default=uuid.uuid4,
-        server_default=text("gen_random_uuid()"),
+        server_default=PG_GEN_UUID,
     )
     chat_id: Mapped[UUID] = mapped_column(
         GUID(), ForeignKey("chats.id", ondelete="CASCADE"), nullable=False
@@ -152,7 +151,7 @@ class MessageAttachment(Base):
         GUID(),
         primary_key=True,
         default=uuid.uuid4,
-        server_default=text("gen_random_uuid()"),
+        server_default=PG_GEN_UUID,
     )
     message_id: Mapped[UUID] = mapped_column(
         GUID(),
@@ -184,7 +183,7 @@ class MessageEvent(Base):
         GUID(),
         primary_key=True,
         default=uuid.uuid4,
-        server_default=text("gen_random_uuid()"),
+        server_default=PG_GEN_UUID,
     )
     message_id: Mapped[UUID] = mapped_column(
         GUID(),

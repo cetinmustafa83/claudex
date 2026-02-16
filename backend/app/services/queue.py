@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from app.constants import (
@@ -10,15 +10,14 @@ from app.constants import (
 )
 from app.models.schemas.queue import QueuedMessage, QueueUpsertResponse
 
-if TYPE_CHECKING:
-    from redis.asyncio import Redis
+from app.utils.cache import CacheStore
 
 logger = logging.getLogger(__name__)
 
 
 class QueueService:
-    def __init__(self, redis_client: "Redis[str]"):
-        self.redis = redis_client
+    def __init__(self, cache: CacheStore):
+        self.cache = cache
 
     def _queue_key(self, chat_id: str) -> str:
         return REDIS_KEY_CHAT_QUEUE.format(chat_id=chat_id)
@@ -33,7 +32,7 @@ class QueueService:
         attachments: list[dict[str, Any]] | None = None,
     ) -> QueueUpsertResponse:
         key = self._queue_key(chat_id)
-        raw = await self.redis.get(key)
+        raw = await self.cache.get(key)
 
         if raw:
             data = json.loads(raw)
@@ -47,7 +46,7 @@ class QueueService:
                 existing_attachments = data.get("attachments") or []
                 data["attachments"] = existing_attachments + attachments
 
-            await self.redis.set(key, json.dumps(data), ex=QUEUE_MESSAGE_TTL_SECONDS)
+            await self.cache.set(key, json.dumps(data), ex=QUEUE_MESSAGE_TTL_SECONDS)
 
             return QueueUpsertResponse(
                 id=UUID(data["id"]),
@@ -67,7 +66,7 @@ class QueueService:
             "attachments": attachments,
         }
 
-        await self.redis.set(
+        await self.cache.set(
             key, json.dumps(message_data), ex=QUEUE_MESSAGE_TTL_SECONDS
         )
 
@@ -80,7 +79,7 @@ class QueueService:
 
     async def get_message(self, chat_id: str) -> QueuedMessage | None:
         key = self._queue_key(chat_id)
-        raw = await self.redis.get(key)
+        raw = await self.cache.get(key)
 
         if not raw:
             return None
@@ -98,7 +97,7 @@ class QueueService:
 
     async def update_message(self, chat_id: str, content: str) -> QueuedMessage | None:
         key = self._queue_key(chat_id)
-        raw = await self.redis.get(key)
+        raw = await self.cache.get(key)
 
         if not raw:
             return None
@@ -106,7 +105,7 @@ class QueueService:
         data = json.loads(raw)
         data["content"] = content
 
-        await self.redis.set(key, json.dumps(data), ex=QUEUE_MESSAGE_TTL_SECONDS)
+        await self.cache.set(key, json.dumps(data), ex=QUEUE_MESSAGE_TTL_SECONDS)
 
         return QueuedMessage(
             id=UUID(data["id"]),
@@ -120,12 +119,12 @@ class QueueService:
 
     async def clear_queue(self, chat_id: str) -> bool:
         key = self._queue_key(chat_id)
-        deleted = await self.redis.delete(key)
+        deleted = await self.cache.delete(key)
         return deleted > 0
 
     async def pop_next_message(self, chat_id: str) -> dict[str, Any] | None:
         key = self._queue_key(chat_id)
-        raw = await self.redis.getdel(key)
+        raw = await self.cache.getdel(key)
 
         if not raw:
             return None

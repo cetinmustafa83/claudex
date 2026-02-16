@@ -1,5 +1,5 @@
 import { ServiceError, AuthenticationError, NetworkError } from './ServiceError';
-import { authStorage } from '@/utils/storage';
+import { invalidateSessionAndRedirect } from '@/utils/authSession';
 
 const ERROR_MESSAGES: Record<string, string> = {
   LOGIN_BAD_CREDENTIALS: 'Invalid email or password',
@@ -139,8 +139,7 @@ export function buildQueryString(
 }
 
 function handleAuthError(): void {
-  authStorage.clearAuth();
-  window.location.href = '/login';
+  invalidateSessionAndRedirect();
 }
 
 function delay(ms: number): Promise<void> {

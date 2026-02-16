@@ -67,6 +67,7 @@ frontend/src-tauri/bin/
 frontend/src-tauri/gen/schemas/
 frontend/src-tauri/icons/android/
 frontend/src-tauri/icons/ios/
+frontend/backend-sidecar/
 backend/desktop/.venv-build/
 backend/desktop/.pyinstaller/
 backend/desktop/build/

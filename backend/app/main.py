@@ -6,46 +6,33 @@ from typing import Any
 
 from fastapi import FastAPI, Response, status
 from fastapi.staticfiles import StaticFiles
+from granian.utils.proxies import wrap_asgi_with_proxy_headers
 from sqlalchemy import text
 
 from app.api.docs import custom_openapi
 from app.api.endpoints import (
+    agents,
     ai_model,
+    attachments,
     auth,
     chat,
-    sandbox,
-    websocket,
-    attachments,
-    permissions,
-    scheduler,
-    skills,
     commands,
-    agents,
-    mcps,
-    marketplace,
     integrations,
+    marketplace,
+    mcps,
+    permissions,
+    sandbox,
+    scheduler,
 )
 from app.api.endpoints import settings as settings_router
+from app.api.endpoints import skills, websocket
 from app.core.config import get_settings
-from app.core.middleware import (
-    setup_middleware,
-)
-from app.db.session import engine, SessionLocal
+from app.core.middleware import setup_middleware
+from app.db.session import SessionLocal, engine
 from app.services.claude_session_registry import session_registry
 from app.services.maintenance import MaintenanceService
 from app.services.streaming.runtime import ChatStreamRuntime
-from app.utils.redis import redis_connection
-from app.admin.config import create_admin
-from app.admin.views import (
-    UserAdmin,
-    ChatAdmin,
-    MessageAdmin,
-    MessageAttachmentAdmin,
-    UserSettingsAdmin,
-)
-from prometheus_fastapi_instrumentator import Instrumentator
-
-from granian.utils.proxies import wrap_asgi_with_proxy_headers
+from app.utils.cache import cache_connection
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -53,6 +40,8 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    if settings.DESKTOP_MODE:
+        await _create_sqlite_tables()
     maintenance_service = MaintenanceService()
     await maintenance_service.start()
     try:
@@ -62,6 +51,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await ChatStreamRuntime.stop_background_chats()
         await session_registry.terminate_all()
         await engine.dispose()
+
+
+async def _create_sqlite_tables() -> None:
+    from app.db.base_class import Base
+    from app.models.db_models import chat, refresh_token, scheduled_tasks, user
+
+    _ = (chat, refresh_token, scheduled_tasks, user)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("SQLite tables created via metadata.create_all()")
 
 
 async def _check_database_ready() -> tuple[bool, str | None]:
@@ -76,8 +76,8 @@ async def _check_database_ready() -> tuple[bool, str | None]:
 
 async def _check_redis_ready() -> tuple[bool, str | None]:
     try:
-        async with redis_connection() as redis:
-            pong = await redis.ping()
+        async with cache_connection() as cache:
+            pong = await cache.ping()
         if pong:
             return True, None
         return False, "Redis ping returned false"
@@ -90,12 +90,16 @@ def create_application() -> FastAPI:
     application = FastAPI(
         title=settings.PROJECT_NAME,
         version=settings.VERSION,
-        docs_url=None
-        if settings.ENVIRONMENT == "production"
-        else f"{settings.API_V1_STR}/docs",
-        openapi_url=None
-        if settings.ENVIRONMENT == "production"
-        else f"{settings.API_V1_STR}/openapi.json",
+        docs_url=(
+            None
+            if settings.ENVIRONMENT == "production"
+            else f"{settings.API_V1_STR}/docs"
+        ),
+        openapi_url=(
+            None
+            if settings.ENVIRONMENT == "production"
+            else f"{settings.API_V1_STR}/openapi.json"
+        ),
         lifespan=lifespan,
     )
 
@@ -183,13 +187,7 @@ def create_application() -> FastAPI:
     )
     application.openapi = lambda: custom_openapi(application)
 
-    admin = create_admin(application, engine, SessionLocal)
-
-    admin.add_view(UserAdmin)
-    admin.add_view(ChatAdmin)
-    admin.add_view(MessageAdmin)
-    admin.add_view(MessageAttachmentAdmin)
-    admin.add_view(UserSettingsAdmin)
+    _mount_admin(application)
 
     @application.get("/health")
     async def health_check() -> dict[str, str]:
@@ -198,18 +196,23 @@ def create_application() -> FastAPI:
     @application.get(f"{settings.API_V1_STR}/readyz")
     async def readyz(response: Response) -> dict[str, Any]:
         db_ok, db_error = await _check_database_ready()
-        redis_ok, redis_error = await _check_redis_ready()
 
         checks: dict[str, dict[str, str | bool]] = {
             "database": {"ok": db_ok},
-            "redis": {"ok": redis_ok},
         }
         if db_error:
             checks["database"]["error"] = db_error
-        if redis_error:
-            checks["redis"]["error"] = redis_error
 
-        if db_ok and redis_ok:
+        all_ok = db_ok
+
+        if not settings.DESKTOP_MODE:
+            redis_ok, redis_error = await _check_redis_ready()
+            checks["redis"] = {"ok": redis_ok}
+            if redis_error:
+                checks["redis"]["error"] = redis_error
+            all_ok = all_ok and redis_ok
+
+        if all_ok:
             return {"status": "ready", "checks": checks}
 
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
@@ -218,8 +221,36 @@ def create_application() -> FastAPI:
     return application
 
 
+def _mount_admin(application: FastAPI) -> None:
+    if settings.DESKTOP_MODE:
+        return
+    from app.admin.config import create_admin
+    from app.admin.views import (
+        ChatAdmin,
+        MessageAdmin,
+        MessageAttachmentAdmin,
+        UserAdmin,
+        UserSettingsAdmin,
+    )
+
+    admin = create_admin(application, engine, SessionLocal)
+    admin.add_view(UserAdmin)
+    admin.add_view(ChatAdmin)
+    admin.add_view(MessageAdmin)
+    admin.add_view(MessageAttachmentAdmin)
+    admin.add_view(UserSettingsAdmin)
+
+
+def _mount_instrumentator(application: FastAPI) -> None:
+    if settings.DESKTOP_MODE:
+        return
+    from prometheus_fastapi_instrumentator import Instrumentator
+
+    Instrumentator().instrument(application).expose(application)
+
+
 app = create_application()
-Instrumentator().instrument(app).expose(app)
+_mount_instrumentator(app)
 
 if not settings.DISABLE_PROXY_HEADERS:
     app = wrap_asgi_with_proxy_headers(app, trusted_hosts=settings.TRUSTED_PROXY_HOSTS)

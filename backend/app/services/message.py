@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, delete, update, or_, and_, func, insert
+from sqlalchemy import case, select, delete, update, or_, and_, insert
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -166,7 +166,10 @@ class MessageService(BaseDbService[Message]):
             values: dict[str, Any] = {
                 "content_text": content_text,
                 "content_render": content_render,
-                "last_seq": func.greatest(Message.last_seq, last_seq),
+                "last_seq": case(
+                    (Message.last_seq > last_seq, Message.last_seq),
+                    else_=last_seq,
+                ),
                 "active_stream_id": active_stream_id,
                 "updated_at": now,
             }
