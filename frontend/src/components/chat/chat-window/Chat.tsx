@@ -27,14 +27,6 @@ import { useChatInputMessageContext } from '@/hooks/useChatInputMessageContext';
 
 const SCROLL_THRESHOLD_PERCENT = 20;
 
-function setsAreEqual(a: Set<string>, b: Set<string>): boolean {
-  if (a.size !== b.size) return false;
-  for (const id of a) {
-    if (!b.has(id)) return false;
-  }
-  return true;
-}
-
 export const Chat = memo(function Chat() {
   const { chatId } = useChatContext();
   const { state, actions } = useChatSessionContext();
@@ -69,23 +61,21 @@ export const Chat = memo(function Chat() {
 
   const { inputMessage, setInputMessage } = useChatInputMessageContext();
 
-  const streamingMessageIdSet = useStreamStore(
-    useCallback(
-      (s: {
-        activeStreams: Map<string, { chatId: string; isActive: boolean; messageId: string }>;
-      }) => {
-        const ids = new Set<string>();
-        s.activeStreams.forEach((stream) => {
-          if (stream.chatId === chatId && stream.isActive) {
-            ids.add(stream.messageId);
-          }
-        });
-        return ids;
-      },
-      [chatId],
-    ),
-    setsAreEqual,
-  );
+  const activeStreams = useStreamStore((state) => state.activeStreams);
+  const streamIdByChatMessage = useStreamStore((state) => state.streamIdByChatMessage);
+  const streamingMessageIdSet = useMemo(() => {
+    const ids = new Set<string>();
+    if (!chatId) return ids;
+
+    for (const streamId of streamIdByChatMessage.values()) {
+      const stream = activeStreams.get(streamId);
+      if (stream?.chatId === chatId && stream.isActive) {
+        ids.add(stream.messageId);
+      }
+    }
+
+    return ids;
+  }, [activeStreams, chatId, streamIdByChatMessage]);
 
   const pendingMessages = useMessageQueueStore((s) =>
     chatId ? (s.queues.get(chatId) ?? EMPTY_QUEUE) : EMPTY_QUEUE,
