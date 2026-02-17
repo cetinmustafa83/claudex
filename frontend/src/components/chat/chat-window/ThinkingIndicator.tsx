@@ -13,7 +13,7 @@ export const ThinkingIndicator = memo(function ThinkingIndicator() {
   }, []);
 
   return (
-    <div className="animate-fade-in px-4 py-1.5 sm:px-6 sm:py-2">
+    <div className="animate-fade-in px-4 pb-1.5 sm:px-6 sm:pb-2">
       <div className="flex items-center gap-2">
         <div className="flex h-3 w-3 flex-wrap items-center justify-center gap-[2px]">
           {[0, 1, 2, 3].map((i) => (

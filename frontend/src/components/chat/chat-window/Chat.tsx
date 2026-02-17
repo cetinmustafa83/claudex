@@ -3,7 +3,6 @@ import React, {
   useState,
   useCallback,
   useEffect,
-  useLayoutEffect,
   memo,
   useMemo,
   type ReactNode,
@@ -25,9 +24,14 @@ import { useChatContext } from '@/hooks/useChatContext';
 import { useChatSessionContext } from '@/hooks/useChatSessionContext';
 import { useChatInputMessageContext } from '@/hooks/useChatInputMessageContext';
 
-const SCROLL_THRESHOLD_PERCENT = 20;
+const AT_BOTTOM_THRESHOLD_PX = 200;
 const INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 const TOP_PAGINATION_ARM_VIEWPORT_MULTIPLIER = 1.5;
+
+interface VirtuosoContextValue {
+  header: ReactNode;
+  footer: ReactNode;
+}
 
 export const Chat = memo(function Chat() {
   const { chatId } = useChatContext();
@@ -106,69 +110,44 @@ export const Chat = memo(function Chat() {
 
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
-  const hasScrolledToBottom = useRef(false);
-  const isNearBottomRef = useRef(true);
-  const allowTopPaginationRef = useRef(false);
+  const hasInitializedToBottomRef = useRef(false);
+  const topPaginationArmedRef = useRef(false);
   const lastScrollTopRef = useRef<number | null>(null);
   const lastPaginatedMessageIdRef = useRef<string | null>(null);
-  const previousMessagesRef = useRef(messages);
+  const prependAnchorMessageIdRef = useRef<string | null>(null);
 
   const [firstItemIndex, setFirstItemIndex] = useState(INITIAL_FIRST_ITEM_INDEX);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [scrollerElement, setScrollerElement] = useState<HTMLElement | null>(null);
-  const listHeaderRef = useRef<ReactNode>(null);
-  const listFooterRef = useRef<ReactNode>(null);
 
   useEffect(() => {
-    hasScrolledToBottom.current = false;
-    isNearBottomRef.current = true;
-    allowTopPaginationRef.current = false;
+    hasInitializedToBottomRef.current = false;
+    topPaginationArmedRef.current = false;
     lastScrollTopRef.current = null;
     lastPaginatedMessageIdRef.current = null;
+    prependAnchorMessageIdRef.current = null;
     setShowScrollButton(false);
     setFirstItemIndex(INITIAL_FIRST_ITEM_INDEX);
-    previousMessagesRef.current = [];
   }, [chatId]);
 
   useEffect(() => {
+    const prependAnchorId = prependAnchorMessageIdRef.current;
+    if (!prependAnchorId || isFetchingNextPage) {
+      return;
+    }
+
     if (chatId && messages.length > 0 && messages[0]?.chat_id !== chatId) {
       return;
     }
 
-    const currentMessages = messages;
-    const previousMessages = previousMessagesRef.current;
-
-    if (previousMessages.length === 0) {
-      previousMessagesRef.current = currentMessages;
-      return;
+    const anchorIndexInCurrent = messages.findIndex((message) => message.id === prependAnchorId);
+    if (anchorIndexInCurrent > 0) {
+      setFirstItemIndex((currentIndex) => currentIndex - anchorIndexInCurrent);
     }
 
-    const firstMessageId = currentMessages[0]?.id;
-    const previousFirstMessageId = previousMessages[0]?.id;
-
-    if (firstMessageId !== previousFirstMessageId) {
-      const previousFirstIndexInCurrent =
-        previousFirstMessageId !== undefined
-          ? currentMessages.findIndex((message) => message.id === previousFirstMessageId)
-          : -1;
-
-      if (previousFirstIndexInCurrent > 0) {
-        setFirstItemIndex((currentIndex) => currentIndex - previousFirstIndexInCurrent);
-      } else {
-        const currentFirstIndexInPrevious =
-          firstMessageId !== undefined
-            ? previousMessages.findIndex((message) => message.id === firstMessageId)
-            : -1;
-        if (currentFirstIndexInPrevious > 0) {
-          setFirstItemIndex((currentIndex) => currentIndex + currentFirstIndexInPrevious);
-        }
-      }
-
-      lastPaginatedMessageIdRef.current = null;
-    }
-
-    previousMessagesRef.current = currentMessages;
-  }, [chatId, messages]);
+    prependAnchorMessageIdRef.current = null;
+    lastPaginatedMessageIdRef.current = null;
+  }, [chatId, isFetchingNextPage, messages]);
 
   const setVirtualScrollerRef = useCallback((ref: HTMLElement | null | Window) => {
     if (ref instanceof HTMLElement) {
@@ -187,26 +166,21 @@ export const Chat = memo(function Chat() {
     const container = scrollerRef.current;
     if (!container) return;
 
-    const { scrollTop, scrollHeight, clientHeight } = container;
+    const { scrollTop, clientHeight } = container;
 
-    if (!hasScrolledToBottom.current) {
+    if (!hasInitializedToBottomRef.current) {
       lastScrollTopRef.current = scrollTop;
       return;
     }
 
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    const thresholdPixels = (clientHeight * SCROLL_THRESHOLD_PERCENT) / 100;
-    const isAtBottom = distanceFromBottom <= thresholdPixels;
-    isNearBottomRef.current = isAtBottom;
     const isScrollingUp = lastScrollTopRef.current !== null && scrollTop < lastScrollTopRef.current;
     const isNearTop = scrollTop <= clientHeight * TOP_PAGINATION_ARM_VIEWPORT_MULTIPLIER;
 
-    if (!allowTopPaginationRef.current && isScrollingUp && isNearTop && !isAtBottom) {
-      allowTopPaginationRef.current = true;
+    if (!topPaginationArmedRef.current && isScrollingUp && isNearTop) {
+      topPaginationArmedRef.current = true;
     }
 
     lastScrollTopRef.current = scrollTop;
-    setShowScrollButton(!isAtBottom);
   }, []);
 
   useEffect(() => {
@@ -220,25 +194,6 @@ export const Chat = memo(function Chat() {
     };
   }, [handleScroll, scrollerElement]);
 
-  useLayoutEffect(() => {
-    if (isInitialLoading || messages.length === 0 || hasScrolledToBottom.current) {
-      return;
-    }
-
-    if (messages[0]?.chat_id !== chatId) {
-      return;
-    }
-
-    virtuosoRef.current?.scrollToIndex({
-      index: 'LAST',
-      align: 'end',
-      behavior: 'auto',
-    });
-
-    hasScrolledToBottom.current = true;
-    handleScroll();
-  }, [chatId, handleScroll, isInitialLoading, messages]);
-
   const scrollToBottom = useCallback(() => {
     setShowScrollButton(false);
     virtuosoRef.current?.scrollToIndex({
@@ -250,8 +205,8 @@ export const Chat = memo(function Chat() {
 
   const followOutput = useCallback(
     (isAtBottom: boolean) => {
-      if (isStreaming && (isAtBottom || isNearBottomRef.current)) {
-        return 'smooth';
+      if (isStreaming && isAtBottom) {
+        return 'auto';
       }
 
       return false;
@@ -259,10 +214,18 @@ export const Chat = memo(function Chat() {
     [isStreaming],
   );
 
+  const handleAtBottomStateChange = useCallback((isAtBottom: boolean) => {
+    setShowScrollButton(!isAtBottom);
+
+    if (isAtBottom) {
+      hasInitializedToBottomRef.current = true;
+    }
+  }, []);
+
   const handleStartReached = useCallback(() => {
     if (
-      !allowTopPaginationRef.current ||
-      !hasScrolledToBottom.current ||
+      !topPaginationArmedRef.current ||
+      !hasInitializedToBottomRef.current ||
       !hasNextPage ||
       isFetchingNextPage ||
       !fetchNextPage
@@ -275,8 +238,9 @@ export const Chat = memo(function Chat() {
       return;
     }
 
-    allowTopPaginationRef.current = false;
+    topPaginationArmedRef.current = false;
     lastPaginatedMessageIdRef.current = firstMessageId;
+    prependAnchorMessageIdRef.current = firstMessageId;
     void fetchNextPage();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, messages]);
 
@@ -340,28 +304,26 @@ export const Chat = memo(function Chat() {
 
       return (
         <div className="w-full lg:mx-auto lg:max-w-3xl">
-          <div className="message-item">
-            {isBotMessage ? (
-              <AssistantMessage
-                id={msg.id}
-                contentText={msg.content_text}
-                contentRender={msg.content_render}
-                attachments={msg.attachments}
-                isStreaming={messageIsStreaming}
-                createdAt={msg.created_at}
-                modelId={msg.model_id}
-                isLastBotMessageWithCommit={isLastBotMessage}
-                isLastBotMessage={isLastBotMessage && !messageIsStreaming}
-              />
-            ) : (
-              <UserMessage
-                contentRender={msg.content_render}
-                attachments={msg.attachments}
-                uploadingAttachmentIds={uploadingAttachmentIds}
-                isStreaming={messageIsStreaming}
-              />
-            )}
-          </div>
+          {isBotMessage ? (
+            <AssistantMessage
+              id={msg.id}
+              contentText={msg.content_text}
+              contentRender={msg.content_render}
+              attachments={msg.attachments}
+              isStreaming={messageIsStreaming}
+              createdAt={msg.created_at}
+              modelId={msg.model_id}
+              isLastBotMessageWithCommit={isLastBotMessage}
+              isLastBotMessage={isLastBotMessage && !messageIsStreaming}
+            />
+          ) : (
+            <UserMessage
+              contentRender={msg.content_render}
+              attachments={msg.attachments}
+              uploadingAttachmentIds={uploadingAttachmentIds}
+              isStreaming={messageIsStreaming}
+            />
+          )}
           {showPermissionAfterThis && pendingPermissionRequest && (
             <div className="px-4 sm:px-6">
               <div className="flex items-start gap-3 sm:gap-4">
@@ -467,13 +429,18 @@ export const Chat = memo(function Chat() {
     showThinking,
   ]);
 
-  listHeaderRef.current = listHeader;
-  listFooterRef.current = listFooter;
+  const virtuosoContext = useMemo<VirtuosoContextValue>(
+    () => ({ header: listHeader, footer: listFooter }),
+    [listFooter, listHeader],
+  );
 
-  const virtuosoComponents = useRef({
-    Header: () => <>{listHeaderRef.current}</>,
-    Footer: () => <>{listFooterRef.current}</>,
-  }).current;
+  const virtuosoComponents = useMemo(
+    () => ({
+      Header: ({ context }: { context: VirtuosoContextValue }) => <>{context.header}</>,
+      Footer: ({ context }: { context: VirtuosoContextValue }) => <>{context.footer}</>,
+    }),
+    [],
+  );
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col">
@@ -482,14 +449,19 @@ export const Chat = memo(function Chat() {
           <ChatSkeleton messageCount={3} className="py-4" />
         ) : (
           <Virtuoso
+            key={chatId ?? 'chat'}
             ref={virtuosoRef}
             className="scrollbar-thin scrollbar-thumb-border-secondary dark:scrollbar-thumb-border-dark hover:scrollbar-thumb-text-quaternary dark:hover:scrollbar-thumb-border-dark-hover scrollbar-track-transparent h-full overflow-y-auto overflow-x-hidden"
             data={messages}
             firstItemIndex={firstItemIndex}
+            initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
+            atBottomThreshold={AT_BOTTOM_THRESHOLD_PX}
+            context={virtuosoContext}
             computeItemKey={(_index, msg) => msg.id}
             itemContent={renderMessage}
             startReached={handleStartReached}
             followOutput={followOutput}
+            atBottomStateChange={handleAtBottomStateChange}
             scrollerRef={setVirtualScrollerRef}
             components={virtuosoComponents}
           />
