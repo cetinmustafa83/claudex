@@ -93,9 +93,35 @@ export const authStorage = {
   },
 };
 
+const CHAT_EVENT_ID_PREFIX = 'chat:';
+const CHAT_EVENT_ID_SUFFIX = ':lastEventId';
+const MAX_CHAT_EVENT_ID_ENTRIES = 500;
+
 export const chatStorage = {
-  getEventId: (chatId: string): string | null => safeGetItem(`chat:${chatId}:lastEventId`),
+  getEventId: (chatId: string): string | null =>
+    safeGetItem(`${CHAT_EVENT_ID_PREFIX}${chatId}${CHAT_EVENT_ID_SUFFIX}`),
   setEventId: (chatId: string, eventId: string): void =>
-    safeSetItem(`chat:${chatId}:lastEventId`, eventId),
-  removeEventId: (chatId: string): void => safeRemoveItem(`chat:${chatId}:lastEventId`),
+    safeSetItem(`${CHAT_EVENT_ID_PREFIX}${chatId}${CHAT_EVENT_ID_SUFFIX}`, eventId),
+  removeEventId: (chatId: string): void =>
+    safeRemoveItem(`${CHAT_EVENT_ID_PREFIX}${chatId}${CHAT_EVENT_ID_SUFFIX}`),
+  pruneStaleEntries: (): void => {
+    const storage = getStorage();
+    if (!storage) return;
+
+    const entries: { key: string; seq: number }[] = [];
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (key?.startsWith(CHAT_EVENT_ID_PREFIX) && key.endsWith(CHAT_EVENT_ID_SUFFIX)) {
+        const val = storage.getItem(key);
+        entries.push({ key, seq: Number(val) || 0 });
+      }
+    }
+
+    if (entries.length <= MAX_CHAT_EVENT_ID_ENTRIES) return;
+
+    entries.sort((a, b) => b.seq - a.seq);
+    for (let i = MAX_CHAT_EVENT_ID_ENTRIES; i < entries.length; i++) {
+      storage.removeItem(entries[i].key);
+    }
+  },
 };

@@ -217,7 +217,7 @@ export function Sidebar({
     setHoveredChatId(null);
   }, []);
 
-  const confirmDeleteChat = async () => {
+  const confirmDeleteChat = useCallback(async () => {
     if (chatToDelete) {
       try {
         await deleteChat.mutateAsync(chatToDelete);
@@ -227,23 +227,21 @@ export function Sidebar({
           navigate('/');
         }
 
-        if (onDeleteChat) {
-          onDeleteChat(chatToDelete);
-        }
+        onDeleteChat?.(chatToDelete);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to delete chat');
       } finally {
         setChatToDelete(null);
       }
     }
-  };
+  }, [chatToDelete, deleteChat, selectedChatId, navigate, onDeleteChat]);
 
-  const handleNewChat = () => {
+  const handleNewChat = useCallback(() => {
     navigate('/');
     if (isMobile) {
       useUIStore.getState().setSidebarOpen(false);
     }
-  };
+  }, [navigate, isMobile]);
 
   const handleDropdownClick = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>, chatId: string) => {
@@ -264,26 +262,29 @@ export function Sidebar({
     [],
   );
 
-  const handleRenameClick = (chat: Chat) => {
+  const handleRenameClick = useCallback((chat: Chat) => {
     setChatToRename(chat);
     setDropdown(null);
-  };
+  }, []);
 
-  const handleSaveRename = async (newTitle: string) => {
-    if (!chatToRename) return;
+  const handleSaveRename = useCallback(
+    async (newTitle: string) => {
+      if (!chatToRename) return;
 
-    try {
-      await updateChat.mutateAsync({
-        chatId: chatToRename.id,
-        updateData: { title: newTitle },
-      });
-      toast.success('Chat renamed successfully');
-      setChatToRename(null);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to rename chat');
-      throw error;
-    }
-  };
+      try {
+        await updateChat.mutateAsync({
+          chatId: chatToRename.id,
+          updateData: { title: newTitle },
+        });
+        toast.success('Chat renamed successfully');
+        setChatToRename(null);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to rename chat');
+        throw error;
+      }
+    },
+    [chatToRename, updateChat],
+  );
 
   const handleTogglePin = useCallback(
     async (chat: Chat) => {

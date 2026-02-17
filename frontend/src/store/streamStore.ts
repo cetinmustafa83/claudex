@@ -153,13 +153,16 @@ export const useStreamStore = create<StreamState>((set, get) => ({
       const stream = state.activeStreams.get(streamId);
       if (!stream) return state;
 
-      stream.messageId = newMessageId;
+      const updatedStream = { ...stream, messageId: newMessageId };
+      const nextStreams = new Map(state.activeStreams);
+      nextStreams.set(streamId, updatedStream);
 
       const nextIndex = new Map(state.streamIdByChatMessage);
       nextIndex.delete(getChatMessageKey(chatId, oldMessageId));
       nextIndex.set(getChatMessageKey(chatId, newMessageId), streamId);
 
       return {
+        activeStreams: nextStreams,
         streamIdByChatMessage: nextIndex,
         activeStreamMetadata: upsertStreamMetadata(state.activeStreamMetadata, {
           chatId: stream.chatId,

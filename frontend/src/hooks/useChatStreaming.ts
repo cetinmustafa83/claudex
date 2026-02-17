@@ -6,6 +6,7 @@ import { useStreamStore } from '@/store/streamStore';
 import type { Chat, ContextUsage, Message, PermissionRequest } from '@/types/chat.types';
 import type { StreamState } from '@/types/stream.types';
 import { cleanupExpiredPdfBlobs, storePdfBlobUrl } from '@/hooks/usePdfBlobCache';
+import { chatStorage } from '@/utils/storage';
 import { useMessageActions } from '@/hooks/useMessageActions';
 import { useInputState } from '@/hooks/useInputState';
 import { useClipboard } from '@/hooks/useClipboard';
@@ -296,6 +297,7 @@ export function useChatStreaming({
 
   useEffect(() => {
     cleanupExpiredPdfBlobs();
+    chatStorage.pruneStaleEntries();
     const interval = setInterval(cleanupExpiredPdfBlobs, 1000 * 60 * 30);
     return () => clearInterval(interval);
   }, []);

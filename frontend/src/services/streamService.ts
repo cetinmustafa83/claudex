@@ -295,14 +295,15 @@ class StreamService {
 
     this.store.abortAllStreams();
 
+    const chatIdArr = Array.from(chatIds);
     const results = await Promise.allSettled(
-      Array.from(chatIds).map((chatId) => chatService.stopStream(chatId)),
+      chatIdArr.map((chatId) => chatService.stopStream(chatId)),
     );
 
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
         logger.error('Batch stream stop failed', 'streamService', {
-          chatId: Array.from(chatIds)[index],
+          chatId: chatIdArr[index],
           error: result.reason,
         });
       }

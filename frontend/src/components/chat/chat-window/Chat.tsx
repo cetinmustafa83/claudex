@@ -7,6 +7,7 @@ import React, {
   useMemo,
   type ReactNode,
 } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { isBrowserObjectUrl } from '@/utils/attachmentUrl';
 import { UserMessage, AssistantMessage } from '@/components/chat/message-bubble/Message';
@@ -21,12 +22,46 @@ import { useStreamStore } from '@/store/streamStore';
 import { useMessageQueueStore, EMPTY_QUEUE } from '@/store/messageQueueStore';
 import { ToolPermissionInline } from '@/components/chat/tools/ToolPermissionInline';
 import { useChatContext } from '@/hooks/useChatContext';
-import { useChatSessionContext } from '@/hooks/useChatSessionContext';
+import {
+  useChatSessionContext,
+  useChatSessionState,
+  useChatSessionActions,
+} from '@/hooks/useChatSessionContext';
 import { useChatInputMessageContext } from '@/hooks/useChatInputMessageContext';
 
 const AT_BOTTOM_THRESHOLD_PX = 200;
 const INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 const TOP_PAGINATION_ARM_VIEWPORT_MULTIPLIER = 1.5;
+
+const MessageInlinePermission = memo(function MessageInlinePermission() {
+  const state = useChatSessionState();
+  const actions = useChatSessionActions();
+
+  if (
+    !state.pendingPermissionRequest ||
+    state.pendingPermissionRequest.tool_name === 'AskUserQuestion' ||
+    state.pendingPermissionRequest.tool_name === 'ExitPlanMode'
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="px-4 sm:px-6">
+      <div className="flex items-start gap-3 sm:gap-4">
+        <div className="h-8 w-8 flex-shrink-0" />
+        <div className="mb-3 mt-1 min-w-0 flex-1">
+          <ToolPermissionInline
+            request={state.pendingPermissionRequest}
+            onApprove={actions.onPermissionApprove}
+            onReject={actions.onPermissionReject}
+            isLoading={state.isPermissionLoading}
+            error={state.permissionError}
+          />
+        </div>
+      </div>
+    </div>
+  );
+});
 
 interface VirtuosoContextValue {
   header: ReactNode;
@@ -50,25 +85,19 @@ export const Chat = memo(function Chat() {
     hasNextPage,
     isFetchingNextPage,
     pendingPermissionRequest,
-    isPermissionLoading,
-    permissionError,
   } = state;
 
-  const {
-    onSubmit,
-    onStopStream,
-    onAttach,
-    onModelChange,
-    onDismissError,
-    fetchNextPage,
-    onPermissionApprove,
-    onPermissionReject,
-  } = actions;
+  const { onSubmit, onStopStream, onAttach, onModelChange, onDismissError, fetchNextPage } =
+    actions;
 
   const { inputMessage, setInputMessage } = useChatInputMessageContext();
 
-  const activeStreams = useStreamStore((streamState) => streamState.activeStreams);
-  const streamIdByChatMessage = useStreamStore((streamState) => streamState.streamIdByChatMessage);
+  const { activeStreams, streamIdByChatMessage } = useStreamStore(
+    useShallow((s) => ({
+      activeStreams: s.activeStreams,
+      streamIdByChatMessage: s.streamIdByChatMessage,
+    })),
+  );
   const streamingMessageIdSet = useMemo(() => {
     const ids = new Set<string>();
     if (!chatId) return ids;
@@ -288,8 +317,6 @@ export const Chat = memo(function Chat() {
       const messageIsStreaming = streamingMessageIdSet.has(msg.id);
       const isBotMessage = msg.is_bot ?? msg.role === 'assistant';
       const isLastBotMessage = isBotMessage && msg.id === lastBotMessageId;
-      const showPermissionAfterThis =
-        isLastBotMessage && !messageIsStreaming && canShowPermissionInline;
       const localAttachmentIds =
         msg.attachments?.reduce<string[]>((acc, attachment) => {
           if (isBrowserObjectUrl(attachment.file_url)) acc.push(attachment.id);
@@ -324,38 +351,11 @@ export const Chat = memo(function Chat() {
               isStreaming={messageIsStreaming}
             />
           )}
-          {showPermissionAfterThis && pendingPermissionRequest && (
-            <div className="px-4 sm:px-6">
-              <div className="flex items-start gap-3 sm:gap-4">
-                <div className="h-8 w-8 flex-shrink-0" />
-                <div className="mb-3 mt-1 min-w-0 flex-1">
-                  <ToolPermissionInline
-                    request={pendingPermissionRequest}
-                    onApprove={onPermissionApprove}
-                    onReject={onPermissionReject}
-                    isLoading={isPermissionLoading}
-                    error={permissionError}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
+          {isLastBotMessage && !messageIsStreaming && <MessageInlinePermission />}
         </div>
       );
     },
-    [
-      canShowPermissionInline,
-      isLoading,
-      isPermissionLoading,
-      lastBotMessageId,
-      latestUserMessageId,
-      onPermissionApprove,
-      onPermissionReject,
-      pendingPermissionRequest,
-      pendingUserMessageId,
-      permissionError,
-      streamingMessageIdSet,
-    ],
+    [isLoading, lastBotMessageId, latestUserMessageId, pendingUserMessageId, streamingMessageIdSet],
   );
 
   const listHeader = useMemo(() => {
@@ -387,22 +387,7 @@ export const Chat = memo(function Chat() {
     return (
       <div className="w-full lg:mx-auto lg:max-w-3xl">
         {showThinking && <ThinkingIndicator />}
-        {showPermissionAtEnd && pendingPermissionRequest && (
-          <div className="px-4 sm:px-6">
-            <div className="flex items-start gap-3 sm:gap-4">
-              <div className="h-8 w-8 flex-shrink-0" />
-              <div className="mb-3 mt-1 min-w-0 flex-1">
-                <ToolPermissionInline
-                  request={pendingPermissionRequest}
-                  onApprove={onPermissionApprove}
-                  onReject={onPermissionReject}
-                  isLoading={isPermissionLoading}
-                  error={permissionError}
-                />
-              </div>
-            </div>
-          </div>
-        )}
+        {showPermissionAtEnd && <MessageInlinePermission />}
         {pendingMessages.map((pending) => (
           <PendingMessage
             key={pending.id}
@@ -418,13 +403,8 @@ export const Chat = memo(function Chat() {
     error,
     handleCancelPending,
     handleEditPending,
-    isPermissionLoading,
     onDismissError,
-    onPermissionApprove,
-    onPermissionReject,
     pendingMessages,
-    pendingPermissionRequest,
-    permissionError,
     showPermissionAtEnd,
     showThinking,
   ]);

@@ -6,6 +6,8 @@ import type { Model } from '@/types/chat.types';
 import { useModelStore } from '@/store/modelStore';
 import { queryKeys } from './queryKeys';
 
+const EMPTY_MODEL_MAP = new Map<string, Model>();
+
 export const useModelsQuery = (options?: Partial<UseQueryOptions<Model[]>>) => {
   return useQuery({
     queryKey: [queryKeys.models],
@@ -36,3 +38,11 @@ export const useModelSelection = (options?: { enabled?: boolean }) => {
 
   return { models, selectedModelId, selectedModel, selectModel, isLoading };
 };
+
+export function useModelMap(): Map<string, Model> {
+  const { data: models } = useModelsQuery();
+  return useMemo(
+    () => (models ? new Map(models.map((m) => [m.model_id, m])) : EMPTY_MODEL_MAP),
+    [models],
+  );
+}

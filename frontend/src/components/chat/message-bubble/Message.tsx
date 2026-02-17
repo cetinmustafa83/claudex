@@ -1,7 +1,7 @@
 import { memo, useMemo } from 'react';
 import { UserMessageContent, AssistantMessageContent } from './MessageContent';
 import { MessageActions } from './MessageActions';
-import { useModelsQuery } from '@/hooks/queries/useModelQueries';
+import { useModelMap } from '@/hooks/queries/useModelQueries';
 import type { AssistantStreamEvent, MessageAttachment } from '@/types/chat.types';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { formatRelativeTime, formatFullTimestamp } from '@/utils/date';
@@ -72,16 +72,16 @@ export const AssistantMessage = memo(function AssistantMessage({
   const { chatId } = useChatContext();
   const { setInputMessage } = useChatInputMessageContext();
   const onSuggestionSelect = isLastBotMessage ? setInputMessage : undefined;
-  const { data: models = [] } = useModelsQuery();
+  const modelMap = useModelMap();
 
   const relativeTime = createdAt ? formatRelativeTime(createdAt) : '';
   const fullTimestamp = createdAt ? formatFullTimestamp(createdAt) : '';
   const modelName = useMemo(() => {
     if (!modelId) return null;
-    const model = models.find((m) => m.model_id === modelId);
+    const model = modelMap.get(modelId);
     if (model?.name) return model.name;
     return modelId.includes(':') ? modelId.split(':').pop()! : modelId;
-  }, [modelId, models]);
+  }, [modelId, modelMap]);
 
   return (
     <div className="group px-4 py-1.5 sm:px-6 sm:py-2">
