@@ -178,6 +178,13 @@ class Settings(BaseSettings):
     # Use when host.docker.internal doesn't work (Linux VPS, Coolify, etc.)
     # Example: DOCKER_PERMISSION_API_URL=http://api:8080
     DOCKER_PERMISSION_API_URL: str = ""
+    DOCKER_RUNTIME: str = (
+        ""  # e.g. "sysbox-runc" for Sysbox, leave empty for default Docker runtime
+    )
+    DOCKER_MEM_LIMIT: str = "4g"
+    DOCKER_CPU_PERIOD: int = 100000
+    DOCKER_CPU_QUOTA: int = 200000
+    DOCKER_PIDS_LIMIT: int = 512
 
     # Host Sandbox configuration
     HOST_SANDBOX_BASE_DIR: str | None = None

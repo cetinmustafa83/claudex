@@ -16,6 +16,11 @@ class SandboxProviderFactory:
             preview_base_url=settings.DOCKER_PREVIEW_BASE_URL,
             traefik_network=settings.DOCKER_TRAEFIK_NETWORK,
             traefik_entrypoint=settings.DOCKER_TRAEFIK_ENTRYPOINT,
+            runtime=settings.DOCKER_RUNTIME,
+            mem_limit=settings.DOCKER_MEM_LIMIT,
+            cpu_period=settings.DOCKER_CPU_PERIOD,
+            cpu_quota=settings.DOCKER_CPU_QUOTA,
+            pids_limit=settings.DOCKER_PIDS_LIMIT,
         )
 
     @staticmethod

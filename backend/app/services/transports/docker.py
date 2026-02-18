@@ -1,12 +1,9 @@
 import asyncio
 import logging
-import select
-import socket
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from typing import Any
 
-import docker as docker_sdk
+import aiodocker
 from claude_agent_sdk._errors import CLIConnectionError, ProcessError
 from claude_agent_sdk.types import ClaudeAgentOptions
 
@@ -27,83 +24,48 @@ class DockerSandboxTransport(BaseSandboxTransport):
     ) -> None:
         super().__init__(sandbox_id=sandbox_id, options=options)
         self._docker_config = docker_config
-        self._executor = ThreadPoolExecutor(max_workers=4)
-        self._docker_client: Any = None
+        self._docker: aiodocker.Docker | None = None
         self._container: Any = None
-        self._exec_id: str | None = None
-        self._raw_socket: Any = None
+        self._exec: Any = None
+        self._stream: Any = None
         self._reader_task: asyncio.Task[None] | None = None
 
     def _get_logger(self) -> Any:
         return logger
 
-    def _get_docker_client(self) -> Any:
-        if self._docker_client is None:
+    def _get_docker(self) -> aiodocker.Docker:
+        if self._docker is None:
             try:
                 if self._docker_config.host:
-                    self._docker_client = docker_sdk.DockerClient(
-                        base_url=self._docker_config.host
-                    )
+                    self._docker = aiodocker.Docker(url=self._docker_config.host)
                 else:
-                    self._docker_client = docker_sdk.from_env()
+                    self._docker = aiodocker.Docker()
             except Exception as e:
                 raise CLIConnectionError(f"Failed to connect to Docker: {e}")
-        return self._docker_client
+        return self._docker
 
-    def _get_container(self) -> Any:
-        client = self._get_docker_client()
+    async def _get_container(self) -> Any:
+        docker = self._get_docker()
         try:
-            container = client.containers.get(f"claudex-sandbox-{self._sandbox_id}")
-            container.reload()
-            if container.status != "running":
-                container.start()
+            container = await docker.containers.get(
+                f"claudex-sandbox-{self._sandbox_id}"
+            )
+            info = await container.show()
+            if info["State"]["Status"] != "running":
+                await container.start()
             return container
         except Exception as e:
             raise CLIConnectionError(
                 f"Failed to connect to sandbox {self._sandbox_id}: {e}"
             )
 
-    def _create_exec(
-        self,
-        command_line: str,
-        envs: dict[str, str],
-        cwd: str,
-        user: str,
-    ) -> tuple[str, Any]:
-        exec_result = self._container.client.api.exec_create(
-            self._container.id,
-            cmd=["bash", "-c", f"exec {command_line}"],
-            stdin=True,
-            tty=False,
-            environment=envs,
-            workdir=cwd,
-            user=user,
-        )
-        exec_id = exec_result["Id"]
-        socket = self._container.client.api.exec_start(
-            exec_id,
-            socket=True,
-            tty=False,
-        )
-        return exec_id, socket
-
-    @staticmethod
-    def _extract_raw_socket(sock: Any) -> Any:
-        if hasattr(sock, "_sock"):
-            return sock._sock
-        return sock
-
     async def connect(self) -> None:
         if self._ready:
             return
         self._stdin_closed = False
 
-        loop = asyncio.get_running_loop()
-
         try:
-            self._container = await loop.run_in_executor(
-                self._executor, self._get_container
-            )
+            self._container = await self._get_container()
         except Exception as exc:
             raise CLIConnectionError(
                 f"Failed to connect to sandbox {self._sandbox_id}: {exc}"
@@ -114,41 +76,74 @@ class DockerSandboxTransport(BaseSandboxTransport):
         envs["TERM"] = TERMINAL_TYPE
 
         try:
-            exec_id, sock = await loop.run_in_executor(
-                self._executor,
-                lambda: self._create_exec(command_line, envs, cwd, user),
+            self._exec = await self._container.exec(
+                cmd=["bash", "-c", f"exec {command_line}"],
+                stdin=True,
+                tty=False,
+                environment=envs,
+                workdir=cwd,
+                user=user,
             )
-            self._exec_id = exec_id
-            self._raw_socket = self._extract_raw_socket(sock)
+            self._stream = self._exec.start()
+            await self._stream._init()
         except Exception as exc:
             raise CLIConnectionError(f"Failed to start Claude CLI: {exc}") from exc
 
-        self._reader_task = loop.create_task(self._read_socket_data())
+        loop = asyncio.get_running_loop()
+        self._reader_task = loop.create_task(self._read_stream_data())
         self._monitor_task = loop.create_task(self._monitor_process())
         self._ready = True
 
     def _is_connection_ready(self) -> bool:
-        return self._raw_socket is not None
+        return self._stream is not None
+
+    async def _read_stream_data(self) -> None:
+        try:
+            while True:
+                msg = await self._stream.read_out()
+                if msg is None:
+                    break
+
+                if msg.stream == 1:
+                    decoded = msg.data.decode("utf-8", errors="replace")
+                    await self._stdout_queue.put(decoded)
+                elif msg.stream == 2 and self._options.stderr:
+                    try:
+                        self._options.stderr(msg.data.decode("utf-8", errors="replace"))
+                    except Exception:
+                        pass
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error("Stream reader error: %s", e)
+        finally:
+            await self._put_sentinel()
+
+    async def _get_exec_info(self) -> dict[str, Any] | None:
+        if not self._exec:
+            return None
+        try:
+            result: dict[str, Any] = await self._exec.inspect()
+            return result
+        except Exception as e:
+            logger.warning("exec_inspect failed: %s", e)
+            return None
 
     async def _kill_exec_process(self) -> None:
-        exec_id = self._exec_id
-        container = self._container
-        if not exec_id or not container:
+        if not self._exec or not self._container:
             return
-        loop = asyncio.get_running_loop()
         try:
-            info = await loop.run_in_executor(self._executor, self._get_exec_info)
+            info = await self._get_exec_info()
             if not info or not info.get("Running", False):
                 return
             pid = info.get("Pid")
             if not pid:
                 return
-            await loop.run_in_executor(
-                self._executor,
-                lambda: container.exec_run(
-                    ["/bin/kill", "-KILL", f"-{pid}"], user="root"
-                ),
+            kill_exec = await self._container.exec(
+                cmd=["/bin/kill", "-KILL", f"-{pid}"],
+                user="root",
             )
+            await kill_exec.start(detach=True)
         except Exception as e:
             logger.debug("Failed to kill exec process: %s", e)
 
@@ -158,125 +153,53 @@ class DockerSandboxTransport(BaseSandboxTransport):
 
         await self._kill_exec_process()
 
-        if self._raw_socket:
+        if self._stream:
             with suppress(Exception):
-                self._raw_socket.close()
-            self._raw_socket = None
+                await self._stream.close()
+            self._stream = None
 
-        self._exec_id = None
+        self._exec = None
 
-        if self._docker_client:
+        if self._docker:
             with suppress(Exception):
-                self._docker_client.close()
-            self._docker_client = None
-
-        await asyncio.to_thread(self._executor.shutdown, wait=True)
+                await self._docker.close()
+            self._docker = None
 
     async def _send_data(self, data: str) -> None:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            self._executor, lambda: self._raw_socket.sendall(data.encode("utf-8"))
-        )
+        if not self._stream:
+            raise CLIConnectionError("Stream not available")
+        await self._stream.write_in(data.encode("utf-8"))
+
+    async def _write_stream_eof(self) -> None:
+        if not self._stream:
+            return
+        await self._stream._init()
+        resp = self._stream._resp
+        if not resp or not resp.connection:
+            return
+        transport = resp.connection.transport
+        if not transport:
+            return
+        if transport.can_write_eof():
+            transport.write_eof()
 
     async def _send_eof(self) -> None:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(self._executor, self._shutdown_socket_write)
-
-    def _shutdown_socket_write(self) -> None:
-        if not self._raw_socket:
+        if not self._stream:
             return
         try:
-            self._raw_socket.shutdown(socket.SHUT_WR)
+            await self._write_stream_eof()
         except Exception:
-            self._raw_socket.sendall(b"\x04")
-
-    def _recv_with_select(self, timeout: float) -> bytes | None:
-        if not self._raw_socket:
-            return None
-        try:
-            fd = self._raw_socket.fileno()
-            readable, _, _ = select.select([fd], [], [], timeout)
-            if not readable:
-                return b""
-            return bytes(self._raw_socket.recv(4096))
-        except Exception:
-            return None
-
-    async def _read_socket_data(self) -> None:
-        loop = asyncio.get_running_loop()
-        buffer = b""
-        drain_empty_count = 0
-
-        try:
-            while True:
-                timeout = 5.0 if self._ready else 0.2
-                data = await loop.run_in_executor(
-                    self._executor, self._recv_with_select, timeout
-                )
-                if data is None:
-                    break
-                if len(data) == 0:
-                    if not self._ready:
-                        drain_empty_count += 1
-                        if drain_empty_count >= 5:
-                            break
-                    continue
-                drain_empty_count = 0
-
-                buffer += data
-
-                while len(buffer) >= 8:
-                    stream_type = buffer[0]
-                    frame_size = int.from_bytes(buffer[4:8], byteorder="big")
-
-                    if frame_size > self._max_buffer_size:
-                        buffer = b""
-                        break
-
-                    if len(buffer) < 8 + frame_size:
-                        break
-
-                    payload = buffer[8 : 8 + frame_size]
-                    buffer = buffer[8 + frame_size :]
-
-                    if stream_type == 1:
-                        decoded = payload.decode("utf-8", errors="replace")
-                        await self._stdout_queue.put(decoded)
-                    elif stream_type == 2 and self._options.stderr:
-                        try:
-                            self._options.stderr(
-                                payload.decode("utf-8", errors="replace")
-                            )
-                        except Exception:
-                            pass
-        except asyncio.CancelledError:
             pass
-        except Exception as e:
-            logger.error("Socket reader error: %s", e)
-        finally:
-            await self._put_sentinel()
-
-    def _get_exec_info(self) -> dict[str, Any] | None:
-        try:
-            result: dict[str, Any] = self._container.client.api.exec_inspect(
-                self._exec_id
-            )
-            return result
-        except Exception as e:
-            logger.warning("exec_inspect failed for exec_id %s: %s", self._exec_id, e)
-            return None
 
     async def _monitor_process(self) -> None:
-        if not self._exec_id or not self._container:
+        if not self._exec or not self._container:
             return
-
-        loop = asyncio.get_running_loop()
 
         try:
             while self._ready:
                 await asyncio.sleep(0.5)
 
-                info = await loop.run_in_executor(self._executor, self._get_exec_info)
+                info = await self._get_exec_info()
                 if info is None:
                     self._exit_error = CLIConnectionError(
                         "Claude CLI process disappeared"

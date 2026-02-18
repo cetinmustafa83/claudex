@@ -400,13 +400,24 @@ class DockerSandboxManager:
                 pass
 
 
-def _is_docker_available() -> bool:
-    try:
-        import docker
+async def _check_docker_available() -> bool:
+    import aiodocker
 
-        client = docker.from_env()
-        client.ping()
+    docker = aiodocker.Docker()
+    try:
+        await docker.version()
         return True
+    except Exception:
+        return False
+    finally:
+        await docker.close()
+
+
+def _is_docker_available() -> bool:
+    import asyncio
+
+    try:
+        return asyncio.run(_check_docker_available())
     except Exception:
         return False
 
@@ -430,16 +441,20 @@ def docker_config() -> DockerConfig:
     )
 
 
-def _ensure_docker_network_exists(network_name: str) -> None:
-    import docker
+async def _create_docker_network(network_name: str) -> None:
+    import aiodocker
 
-    client = docker.from_env()
+    docker = aiodocker.Docker()
     try:
-        client.networks.get(network_name)
-    except docker.errors.NotFound:
-        client.networks.create(network_name, driver="bridge")
+        await docker.networks.get(network_name)
+    except Exception:
+        await docker.networks.create({"Name": network_name, "Driver": "bridge"})
     finally:
-        client.close()
+        await docker.close()
+
+
+async def _ensure_docker_network_exists(network_name: str) -> None:
+    await _create_docker_network(network_name)
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -449,7 +464,7 @@ async def docker_sandbox_manager(
 ) -> AsyncGenerator[DockerSandboxManager, None]:
     if not docker_available:
         pytest.skip("Docker not available")
-    _ensure_docker_network_exists(docker_config.network)
+    await _ensure_docker_network_exists(docker_config.network)
     manager = DockerSandboxManager(docker_config)
     await manager.get_sandbox()
     try:

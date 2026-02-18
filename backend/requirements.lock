@@ -4,8 +4,12 @@ aiofiles==25.1.0
     # via anthropic-bridge
 aiohappyeyeballs==2.6.1
     # via aiohttp
+aiodocker==0.24.0
+    # via -r requirements.txt
 aiohttp==3.13.3
-    # via modal
+    # via
+    #   aiodocker
+    #   modal
 aiosignal==1.4.0
     # via aiohttp
 aiosmtplib==5.1.0
@@ -73,8 +77,6 @@ deprecated==1.3.1
     # via limits
 dnspython==2.8.0
     # via email-validator
-docker==7.1.0
-    # via -r requirements.txt
 e2b==1.3.4rc1
     # via -r requirements.txt
 ecdsa==0.19.1
@@ -237,7 +239,7 @@ referencing==0.37.0
     #   jsonschema
     #   jsonschema-specifications
 requests==2.32.5
-    # via docker
+    # via modal
 rich==14.3.2
     # via
     #   modal
@@ -307,9 +309,7 @@ typing-inspection==0.4.2
     #   pydantic
     #   pydantic-settings
 urllib3==2.6.3
-    # via
-    #   docker
-    #   requests
+    # via requests
 uvicorn==0.40.0
     # via
     #   anthropic-bridge
