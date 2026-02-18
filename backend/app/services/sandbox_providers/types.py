@@ -78,3 +78,8 @@ class DockerConfig:
     openvscode_port: int = 8765
     traefik_network: str = ""
     traefik_entrypoint: str = "https"
+    runtime: str = ""
+    mem_limit: str = ""
+    cpu_period: int = 0
+    cpu_quota: int = 0
+    pids_limit: int = 0

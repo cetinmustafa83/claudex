@@ -4,19 +4,18 @@ import logging
 import shlex
 import tarfile
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from asyncio import AbstractEventLoop
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import docker
+import aiodocker
 
 from app.constants import (
     DOCKER_AVAILABLE_PORTS,
     DOCKER_STATUS_RUNNING,
     EXCLUDED_PREVIEW_PORTS,
     SANDBOX_DEFAULT_COMMAND_TIMEOUT,
-    SANDBOX_DEFAULT_TIMEOUT,
     SANDBOX_HOME_DIR,
     TERMINAL_TYPE,
     VNC_WEBSOCKET_PORT,
@@ -41,32 +40,36 @@ DOCKER_SANDBOX_CONTAINER_PREFIX = "claudex-sandbox-"
 class LocalDockerProvider(SandboxProvider):
     def __init__(self, config: DockerConfig) -> None:
         self.config = config
-        self._executor = ThreadPoolExecutor(max_workers=10)
         self._containers: dict[str, Any] = {}
         self._pty_sessions: dict[str, dict[str, Any]] = {}
         self._port_mappings: dict[str, dict[int, int]] = {}
-        self._docker_client: Any = None
+        self._docker: aiodocker.Docker | None = None
+        self._docker_loop: AbstractEventLoop | None = None
 
-    def _get_docker_client(self) -> Any:
-        if self._docker_client is None:
+    async def _get_docker(self) -> aiodocker.Docker:
+        loop = asyncio.get_running_loop()
+        if self._docker is not None and self._docker_loop is not loop:
+            try:
+                await self._docker.close()
+            except Exception:
+                pass
+            self._docker = None
+            self._docker_loop = None
+            self._containers.clear()
+            self._pty_sessions.clear()
+
+        if self._docker is None:
             try:
                 if self.config.host:
-                    self._docker_client = docker.DockerClient(
-                        base_url=self.config.host,
-                        timeout=SANDBOX_DEFAULT_TIMEOUT,
-                    )
+                    self._docker = aiodocker.Docker(url=self.config.host)
                 else:
-                    self._docker_client = docker.from_env(
-                        timeout=SANDBOX_DEFAULT_TIMEOUT
-                    )
+                    self._docker = aiodocker.Docker()
+                self._docker_loop = loop
             except Exception as e:
                 raise SandboxException(f"Failed to connect to Docker: {e}")
-        return self._docker_client
+        return self._docker
 
     def _build_traefik_labels(self, sandbox_id: str) -> dict[str, str]:
-        # Traefik path-based routing: /sandbox/{id}/{port} -> container port.
-        # Solves mixed-content blocking when main app is HTTPS but containers are HTTP.
-        # Requires DOCKER_TRAEFIK_NETWORK and DOCKER_PREVIEW_BASE_URL to be configured.
         parsed_base = urlparse(self.config.preview_base_url)
         preview_host = parsed_base.hostname
         if not preview_host or not self.config.traefik_network:
@@ -104,59 +107,89 @@ class LocalDockerProvider(SandboxProvider):
 
         return labels
 
-    def _create_container(self, sandbox_id: str, image: Any | None = None) -> Any:
-        client = self._get_docker_client()
+    @staticmethod
+    def _parse_mem_limit(mem_str: str) -> int:
+        mem_str = mem_str.strip().lower()
+        if not mem_str:
+            return 0
+        multipliers = {"k": 1024, "m": 1024**2, "g": 1024**3}
+        if mem_str[-1] in multipliers:
+            return int(mem_str[:-1]) * multipliers[mem_str[-1]]
+        return int(mem_str)
+
+    async def _create_container(self, sandbox_id: str, image: str | None = None) -> Any:
+        docker = await self._get_docker()
         labels = self._build_traefik_labels(sandbox_id)
         network = self.config.traefik_network or self.config.network
 
-        container = client.containers.run(
-            image or self.config.image,
-            command="/bin/bash",
-            name=f"{DOCKER_SANDBOX_CONTAINER_PREFIX}{sandbox_id}",
-            hostname="sandbox",
-            user="user",
-            working_dir=self.config.user_home,
-            stdin_open=True,
-            tty=True,
-            detach=True,
-            remove=False,
-            privileged=True,
-            security_opt=["no-new-privileges=false"],
-            network=network,
-            labels=labels,
-            ports={f"{port}/tcp": None for port in DOCKER_AVAILABLE_PORTS},
-            environment={
-                "TERM": TERMINAL_TYPE,
-                "HOME": self.config.user_home,
-                "USER": "user",
-                "OPENVSCODE_PORT": str(self.config.openvscode_port),
-            },
-        )
+        exposed_ports: dict[str, dict[str, Any]] = {
+            f"{port}/tcp": {} for port in DOCKER_AVAILABLE_PORTS
+        }
+        port_bindings: dict[str, list[dict[str, str]]] = {
+            f"{port}/tcp": [{"HostPort": ""}] for port in DOCKER_AVAILABLE_PORTS
+        }
+
+        host_config: dict[str, Any] = {
+            "PortBindings": port_bindings,
+            "NetworkMode": network,
+        }
+
+        if self.config.runtime:
+            host_config["Runtime"] = self.config.runtime
+        else:
+            host_config["Privileged"] = True
+            host_config["SecurityOpt"] = ["no-new-privileges=false"]
+
+        if self.config.mem_limit:
+            host_config["Memory"] = self._parse_mem_limit(self.config.mem_limit)
+        if self.config.cpu_period > 0:
+            host_config["CpuPeriod"] = self.config.cpu_period
+        if self.config.cpu_quota > 0:
+            host_config["CpuQuota"] = self.config.cpu_quota
+        if self.config.pids_limit > 0:
+            host_config["PidsLimit"] = self.config.pids_limit
+
+        config: dict[str, Any] = {
+            "Image": image or self.config.image,
+            "Cmd": ["/bin/bash"],
+            "Hostname": "sandbox",
+            "User": "user",
+            "WorkingDir": self.config.user_home,
+            "OpenStdin": True,
+            "Tty": True,
+            "Labels": labels,
+            "ExposedPorts": exposed_ports,
+            "Env": [
+                f"TERM={TERMINAL_TYPE}",
+                f"HOME={self.config.user_home}",
+                "USER=user",
+                f"OPENVSCODE_PORT={self.config.openvscode_port}",
+            ],
+            "HostConfig": host_config,
+        }
+
+        container_name = f"{DOCKER_SANDBOX_CONTAINER_PREFIX}{sandbox_id}"
+        container = await docker.containers.create_or_replace(container_name, config)
+        await container.start()
         return container
 
     async def create_sandbox(self) -> str:
-        loop = asyncio.get_running_loop()
         sandbox_id = str(uuid.uuid4())[:12]
 
         try:
-            container = await loop.run_in_executor(
-                self._executor, lambda: self._create_container(sandbox_id)
-            )
+            container = await self._create_container(sandbox_id)
             self._containers[sandbox_id] = container
 
-            port_map = await loop.run_in_executor(
-                self._executor, lambda: self._extract_port_mappings(container)
-            )
+            port_map = await self._extract_port_mappings(container)
             self._port_mappings[sandbox_id] = port_map
 
             return sandbox_id
         except Exception as e:
             raise SandboxException(f"Failed to create Docker sandbox: {e}")
 
-    @staticmethod
-    def _extract_port_mappings(container: Any) -> dict[int, int]:
-        container.reload()
-        ports = container.attrs.get("NetworkSettings", {}).get("Ports", {})
+    async def _extract_port_mappings(self, container: Any) -> dict[int, int]:
+        info = await container.show()
+        ports = info.get("NetworkSettings", {}).get("Ports", {}) or {}
         port_map: dict[int, int] = {}
         for container_port, host_bindings in ports.items():
             if (
@@ -170,47 +203,43 @@ class LocalDockerProvider(SandboxProvider):
                     port_map[internal_port] = int(host_port)
         return port_map
 
-    def _is_container_running(self, container: Any) -> bool:
-        container.reload()
-        return bool(container.status == DOCKER_STATUS_RUNNING)
+    async def _is_container_running(self, container: Any) -> bool:
+        info = await container.show()
+        status = info.get("State", {}).get("Status")
+        return isinstance(status, str) and status == DOCKER_STATUS_RUNNING
 
-    def _get_container_by_id(self, sandbox_id: str) -> Any | None:
-        client = self._get_docker_client()
+    async def _get_container_by_id(self, sandbox_id: str) -> Any | None:
+        docker = await self._get_docker()
         try:
-            return client.containers.get(
+            return await docker.containers.get(
                 f"{DOCKER_SANDBOX_CONTAINER_PREFIX}{sandbox_id}"
             )
         except Exception:
             return None
 
     async def connect_sandbox(self, sandbox_id: str) -> bool:
+        await self._get_docker()
+
         if sandbox_id in self._containers:
             container = self._containers[sandbox_id]
-            loop = asyncio.get_running_loop()
 
-            is_running = await loop.run_in_executor(
-                self._executor, lambda: self._is_container_running(container)
-            )
-            if is_running:
+            if await self._is_container_running(container):
                 return True
             del self._containers[sandbox_id]
 
-        loop = asyncio.get_running_loop()
-
-        container = await loop.run_in_executor(
-            self._executor, lambda: self._get_container_by_id(sandbox_id)
-        )
+        container = await self._get_container_by_id(sandbox_id)
         if container:
             self._containers[sandbox_id] = container
-            port_mappings = await loop.run_in_executor(
-                self._executor, lambda: self._extract_port_mappings(container)
+            self._port_mappings[sandbox_id] = await self._extract_port_mappings(
+                container
             )
-            self._port_mappings[sandbox_id] = port_mappings
             return True
 
         return False
 
     async def delete_sandbox(self, sandbox_id: str) -> None:
+        await self._get_docker()
+
         container = self._containers.get(sandbox_id)
 
         if not container:
@@ -221,42 +250,43 @@ class LocalDockerProvider(SandboxProvider):
 
         await self._destroy_container(container)
 
-        if sandbox_id in self._containers:
-            del self._containers[sandbox_id]
-        if sandbox_id in self._port_mappings:
-            del self._port_mappings[sandbox_id]
+        self._containers.pop(sandbox_id, None)
+        self._port_mappings.pop(sandbox_id, None)
 
         logger.info("Successfully deleted Docker sandbox %s", sandbox_id)
 
     async def is_running(self, sandbox_id: str) -> bool:
+        await self._get_docker()
+
         container = self._containers.get(sandbox_id)
         if not container:
-            return False
+            connected = await self.connect_sandbox(sandbox_id)
+            if not connected:
+                return False
+            container = self._containers.get(sandbox_id)
+            if not container:
+                return False
 
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor, lambda: self._is_container_running(container)
-        )
+        return await self._is_container_running(container)
 
-    def _run_command(
-        self,
-        container: Any,
-        command: str,
-        env_list: list[str],
-        background: bool,
-    ) -> tuple[int, bytes]:
-        result = container.exec_run(
-            cmd=["bash", "-c", command],
-            environment=env_list,
-            workdir=self.config.user_home,
-            demux=True,
-            detach=background,
-        )
-        if background:
-            return 0, b"Background process started"
-        exit_code = result.exit_code
-        stdout, stderr = result.output or (b"", b"")
-        return exit_code, (stdout or b"") + (stderr or b"")
+    async def _collect_exec_output(self, exec_obj: Any) -> tuple[int, str]:
+        stream = exec_obj.start()
+        output_parts: list[bytes] = []
+        try:
+            while True:
+                msg = await stream.read_out()
+                if msg is None:
+                    break
+                output_parts.append(msg.data)
+        finally:
+            try:
+                await stream.close()
+            except Exception:
+                pass
+        exec_info = await exec_obj.inspect()
+        exit_code = exec_info.get("ExitCode", -1)
+        output = b"".join(output_parts).decode("utf-8", errors="replace")
+        return exit_code, output
 
     async def execute_command(
         self,
@@ -267,40 +297,28 @@ class LocalDockerProvider(SandboxProvider):
         timeout: int | None = None,
     ) -> CommandResult:
         container = await self._get_container(sandbox_id)
-        loop = asyncio.get_running_loop()
         env_list = [f"{k}={v}" for k, v in (envs or {}).items()]
-
         effective_timeout = timeout or SANDBOX_DEFAULT_COMMAND_TIMEOUT
 
-        exit_code, output = await self._execute_with_timeout(
-            loop.run_in_executor(
-                self._executor,
-                lambda: self._run_command(container, command, env_list, background),
-            ),
+        exec_obj = await container.exec(
+            cmd=["bash", "-c", command],
+            environment=env_list,
+            workdir=self.config.user_home,
+        )
+
+        if background:
+            await exec_obj.start(detach=True)
+            return CommandResult(
+                stdout="Background process started", stderr="", exit_code=0
+            )
+
+        exit_code, output_str = await self._execute_with_timeout(
+            self._collect_exec_output(exec_obj),
             effective_timeout,
             f"Command execution timed out after {effective_timeout}s",
         )
 
-        output_str = output.decode("utf-8", errors="replace")
         return CommandResult(stdout=output_str, stderr="", exit_code=exit_code)
-
-    def _write_container_file(
-        self,
-        container: Any,
-        normalized_path: str,
-        content_bytes: bytes,
-    ) -> None:
-        tar_stream = io.BytesIO()
-        with tarfile.open(fileobj=tar_stream, mode="w") as tar:
-            file_data = io.BytesIO(content_bytes)
-            info = tarfile.TarInfo(name=Path(normalized_path).name)
-            info.size = len(content_bytes)
-            tar.addfile(info, file_data)
-        tar_stream.seek(0)
-
-        parent_dir = str(Path(normalized_path).parent)
-        container.exec_run(f"mkdir -p {shlex.quote(parent_dir)}")
-        container.put_archive(parent_dir, tar_stream.read())
 
     async def write_file(
         self,
@@ -310,35 +328,24 @@ class LocalDockerProvider(SandboxProvider):
     ) -> None:
         container = await self._get_container(sandbox_id)
         normalized_path = self.normalize_path(path)
-        loop = asyncio.get_running_loop()
 
         if isinstance(content, str):
             content_bytes = content.encode("utf-8")
         else:
             content_bytes = content
 
-        await loop.run_in_executor(
-            self._executor,
-            lambda: self._write_container_file(
-                container, normalized_path, content_bytes
-            ),
-        )
+        tar_stream = io.BytesIO()
+        with tarfile.open(fileobj=tar_stream, mode="w") as tar:
+            file_data = io.BytesIO(content_bytes)
+            info = tarfile.TarInfo(name=Path(normalized_path).name)
+            info.size = len(content_bytes)
+            tar.addfile(info, file_data)
+        tar_stream.seek(0)
 
-    def _read_container_file(self, container: Any, normalized_path: str) -> bytes:
-        bits, _ = container.get_archive(normalized_path)
-        stream = io.BytesIO()
-        for chunk in bits:
-            stream.write(chunk)
-        stream.seek(0)
-
-        with tarfile.open(fileobj=stream, mode="r") as tar:
-            members = tar.getmembers()
-            if not members:
-                return b""
-            f = tar.extractfile(members[0])
-            if f:
-                return f.read()
-        return b""
+        parent_dir = str(Path(normalized_path).parent)
+        mkdir_exec = await container.exec(cmd=["mkdir", "-p", parent_dir])
+        await self._collect_exec_output(mkdir_exec)
+        await container.put_archive(parent_dir, tar_stream.read())
 
     async def read_file(
         self,
@@ -347,12 +354,15 @@ class LocalDockerProvider(SandboxProvider):
     ) -> FileContent:
         container = await self._get_container(sandbox_id)
         normalized_path = self.normalize_path(path)
-        loop = asyncio.get_running_loop()
 
-        content_bytes = await loop.run_in_executor(
-            self._executor,
-            lambda: self._read_container_file(container, normalized_path),
-        )
+        tar_obj = await container.get_archive(normalized_path)
+
+        content_bytes = b""
+        members = tar_obj.getmembers()
+        if members:
+            f = tar_obj.extractfile(members[0])
+            if f:
+                content_bytes = f.read()
 
         content, is_binary = self._encode_file_content(path, content_bytes)
 
@@ -362,30 +372,6 @@ class LocalDockerProvider(SandboxProvider):
             type="file",
             is_binary=is_binary,
         )
-
-    def _create_pty_exec(
-        self, container: Any, tmux_session: str
-    ) -> tuple[dict[str, Any], Any]:
-        cmd = [
-            "bash",
-            "-c",
-            f"command -v tmux >/dev/null && tmux new -A -s {shlex.quote(tmux_session)} \\; set -g status off || exec bash",
-        ]
-
-        exec_id = container.client.api.exec_create(
-            container.id,
-            cmd=cmd,
-            stdin=True,
-            tty=True,
-            environment={"TERM": TERMINAL_TYPE},
-            workdir=self.config.user_home,
-        )
-        socket = container.client.api.exec_start(
-            exec_id["Id"],
-            socket=True,
-            tty=True,
-        )
-        return exec_id, socket
 
     async def create_pty(
         self,
@@ -397,18 +383,29 @@ class LocalDockerProvider(SandboxProvider):
     ) -> PtySession:
         container = await self._get_container(sandbox_id)
         session_id = str(uuid.uuid4())
-        loop = asyncio.get_running_loop()
 
-        exec_info, socket = await loop.run_in_executor(
-            self._executor, lambda: self._create_pty_exec(container, tmux_session)
+        cmd = [
+            "bash",
+            "-c",
+            f"command -v tmux >/dev/null && tmux new -A -s {shlex.quote(tmux_session)} \\; set -g status off || exec bash",
+        ]
+
+        exec_obj = await container.exec(
+            cmd=cmd,
+            stdin=True,
+            tty=True,
+            environment={"TERM": TERMINAL_TYPE},
+            workdir=self.config.user_home,
         )
+        stream = exec_obj.start()
+        await stream._init()
 
         self._register_pty_session(
             sandbox_id,
             session_id,
             {
-                "exec_id": exec_info["Id"],
-                "socket": socket,
+                "exec": exec_obj,
+                "stream": stream,
                 "container": container,
                 "on_data": on_data,
                 "reader_task": None,
@@ -417,7 +414,7 @@ class LocalDockerProvider(SandboxProvider):
 
         if on_data:
             reader_task = asyncio.create_task(
-                self._pty_reader(sandbox_id, session_id, socket, on_data)
+                self._pty_reader(sandbox_id, session_id, stream, on_data)
             )
             self._pty_sessions[sandbox_id][session_id]["reader_task"] = reader_task
 
@@ -431,30 +428,19 @@ class LocalDockerProvider(SandboxProvider):
             cols=cols,
         )
 
-    @staticmethod
-    def _recv_pty_socket(sock: Any) -> bytes | None:
-        try:
-            return bytes(sock._sock.recv(4096))
-        except Exception:
-            return None
-
     async def _pty_reader(
         self,
         sandbox_id: str,
         session_id: str,
-        socket: Any,
+        stream: Any,
         on_data: PtyDataCallbackType,
     ) -> None:
-        loop = asyncio.get_running_loop()
-
         try:
             while True:
-                data = await loop.run_in_executor(
-                    self._executor, self._recv_pty_socket, socket
-                )
-                if data is None or len(data) == 0:
+                msg = await stream.read_out()
+                if msg is None:
                     break
-                await on_data(data)
+                await on_data(msg.data)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -470,21 +456,11 @@ class LocalDockerProvider(SandboxProvider):
         if not session:
             return
 
-        socket = session.get("socket")
-        if not socket:
+        stream = session.get("stream")
+        if not stream:
             return
 
-        loop = asyncio.get_running_loop()
-
-        await loop.run_in_executor(self._executor, lambda: socket._sock.send(data))
-
-    @staticmethod
-    def _resize_pty(container: Any, exec_id: str, rows: int, cols: int) -> None:
-        container.client.api.exec_resize(
-            exec_id,
-            height=max(rows, 1),
-            width=max(cols, 1),
-        )
+        await stream.write_in(data)
 
     async def resize_pty(
         self,
@@ -496,17 +472,11 @@ class LocalDockerProvider(SandboxProvider):
         if not session:
             return
 
-        container = session.get("container")
-        exec_id = session.get("exec_id")
-        if not container or not exec_id:
+        exec_obj = session.get("exec")
+        if not exec_obj:
             return
 
-        loop = asyncio.get_running_loop()
-
-        await loop.run_in_executor(
-            self._executor,
-            lambda: self._resize_pty(container, exec_id, size.rows, size.cols),
-        )
+        await exec_obj.resize(h=max(size.rows, 1), w=max(size.cols, 1))
 
     async def kill_pty(
         self,
@@ -525,10 +495,10 @@ class LocalDockerProvider(SandboxProvider):
             except asyncio.CancelledError:
                 pass
 
-        socket = session.get("socket")
-        if socket:
+        stream = session.get("stream")
+        if stream:
             try:
-                socket.close()
+                await stream.close()
             except Exception:
                 pass
 
@@ -566,43 +536,36 @@ class LocalDockerProvider(SandboxProvider):
         )
 
     async def _find_container_by_name(self, sandbox_id: str) -> Any:
-        client = self._get_docker_client()
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor,
-            lambda: client.containers.get(
-                f"{DOCKER_SANDBOX_CONTAINER_PREFIX}{sandbox_id}"
-            ),
+        docker = await self._get_docker()
+        return await docker.containers.get(
+            f"{DOCKER_SANDBOX_CONTAINER_PREFIX}{sandbox_id}"
         )
 
     async def _destroy_container(self, container: Any) -> None:
         try:
-            await asyncio.to_thread(container.stop, timeout=5)
+            await container.stop(t=5)
         except Exception:
             pass
         try:
-            await asyncio.to_thread(container.remove, force=True)
+            await container.delete(force=True)
         except Exception:
             pass
 
-    @staticmethod
-    def _ensure_running(container: Any) -> None:
-        container.reload()
-        if container.status != DOCKER_STATUS_RUNNING:
-            container.start()
+    async def _ensure_running(self, container: Any) -> None:
+        info = await container.show()
+        if info["State"]["Status"] != DOCKER_STATUS_RUNNING:
+            await container.start()
 
     async def _get_container(self, sandbox_id: str) -> Any:
+        await self._get_docker()
+
         if sandbox_id not in self._containers:
             connected = await self.connect_sandbox(sandbox_id)
             if not connected:
                 raise SandboxException(f"Container {sandbox_id} not found")
 
         container = self._containers[sandbox_id]
-        loop = asyncio.get_running_loop()
-
-        await loop.run_in_executor(
-            self._executor, lambda: self._ensure_running(container)
-        )
+        await self._ensure_running(container)
         return container
 
     async def get_ide_url(self, sandbox_id: str) -> str | None:
@@ -647,24 +610,22 @@ class LocalDockerProvider(SandboxProvider):
     async def clone_sandbox(
         self, source_sandbox_id: str, checkpoint_id: str | None = None
     ) -> str:
-        loop = asyncio.get_running_loop()
+        docker = await self._get_docker()
         source_container = await self._get_container(source_sandbox_id)
 
-        temp_image = await loop.run_in_executor(self._executor, source_container.commit)
+        commit_result = await source_container.commit()
+        temp_image_id = commit_result["Id"]
 
         new_sandbox_id = str(uuid.uuid4())[:12]
         new_container: Any = None
 
         try:
-            new_container = await loop.run_in_executor(
-                self._executor,
-                lambda: self._create_container(new_sandbox_id, image=temp_image),
+            new_container = await self._create_container(
+                new_sandbox_id, image=temp_image_id
             )
             self._containers[new_sandbox_id] = new_container
 
-            port_map = await loop.run_in_executor(
-                self._executor, lambda: self._extract_port_mappings(new_container)
-            )
+            port_map = await self._extract_port_mappings(new_container)
             self._port_mappings[new_sandbox_id] = port_map
 
             if checkpoint_id:
@@ -672,29 +633,22 @@ class LocalDockerProvider(SandboxProvider):
 
             return new_sandbox_id
         except Exception:
-            if new_sandbox_id in self._containers:
-                del self._containers[new_sandbox_id]
-            if new_sandbox_id in self._port_mappings:
-                del self._port_mappings[new_sandbox_id]
+            self._containers.pop(new_sandbox_id, None)
+            self._port_mappings.pop(new_sandbox_id, None)
             if new_container is not None:
                 try:
-                    await loop.run_in_executor(
-                        self._executor, lambda: new_container.remove(force=True)
-                    )
+                    await new_container.delete(force=True)
                 except Exception:
                     pass
             raise
         finally:
             try:
-                await loop.run_in_executor(
-                    self._executor, lambda: temp_image.remove(force=True)
-                )
+                await docker.images.delete(temp_image_id, force=True)
             except Exception:
                 pass
 
     async def cleanup(self) -> None:
         await super().cleanup()
-        self._executor.shutdown(wait=False)
-        if self._docker_client:
-            self._docker_client.close()
-            self._docker_client = None
+        if self._docker:
+            await self._docker.close()
+            self._docker = None
