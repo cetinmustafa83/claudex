@@ -343,8 +343,15 @@ class LocalDockerProvider(SandboxProvider):
         tar_stream.seek(0)
 
         parent_dir = str(Path(normalized_path).parent)
-        mkdir_exec = await container.exec(cmd=["mkdir", "-p", parent_dir])
-        await self._collect_exec_output(mkdir_exec)
+        mkdir_exec = await container.exec(
+            cmd=["mkdir", "-p", parent_dir],
+            user="root",
+        )
+        mkdir_exit_code, mkdir_output = await self._collect_exec_output(mkdir_exec)
+        if mkdir_exit_code != 0:
+            raise SandboxException(
+                f"Failed to create directory {parent_dir}: {mkdir_output}"
+            )
         await container.put_archive(parent_dir, tar_stream.read())
 
     async def read_file(
