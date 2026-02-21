@@ -33,6 +33,12 @@ jobs:
           cd frontend
           npm ci --legacy-peer-deps
 
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd frontend/src-tauri
+          jq --arg v "$VERSION" '.version = $v' tauri.conf.json > tmp.json && mv tmp.json tauri.conf.json
+
       - name: Build Tauri bundles
         run: |
           cd frontend

@@ -93,7 +93,7 @@ Desktop mode uses Tauri with a bundled Python backend sidecar on `localhost:8081
 
 ### Download prebuilt app
 
-- Apple Silicon DMG: [Claudex_0.1.0_aarch64.dmg](https://github.com/Mng-dev-ai/claudex/releases/download/v0.1.1/Claudex_0.1.0_aarch64.dmg)
+- Apple Silicon DMG: [Latest Release](https://github.com/Mng-dev-ai/claudex/releases/latest)
 
 ### How it works
 
