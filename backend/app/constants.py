@@ -10,6 +10,7 @@ REDIS_KEY_CHAT_STREAM_LIVE: Final[str] = "chat:{chat_id}:stream:live"
 REDIS_KEY_USER_SETTINGS: Final[str] = "user_settings:{user_id}"
 REDIS_KEY_CHAT_CONTEXT_USAGE: Final[str] = "chat:{chat_id}:context_usage"
 REDIS_KEY_CHAT_QUEUE: Final[str] = "chat:{chat_id}:queue"
+REDIS_KEY_CHAT_QUEUE_SEND_NOW: Final[str] = "chat:{chat_id}:queue:send_now"
 
 QUEUE_MESSAGE_TTL_SECONDS: Final[int] = 3600
 

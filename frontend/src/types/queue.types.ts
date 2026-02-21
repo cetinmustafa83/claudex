@@ -25,4 +25,5 @@ export interface LocalQueuedMessage {
   attachments?: QueueMessageAttachment[];
   queuedAt: number;
   synced: boolean;
+  sendingNow: boolean;
 }

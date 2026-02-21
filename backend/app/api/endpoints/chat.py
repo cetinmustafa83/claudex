@@ -633,6 +633,47 @@ async def delete_queued_message(
         )
 
 
+@router.post(
+    "/chats/{chat_id}/queue/{message_id}/send-now",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def send_now_queued_message(
+    chat_id: UUID,
+    message_id: UUID,
+    current_user: User = Depends(get_current_user),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> None:
+    await _ensure_chat_access(chat_id, chat_service, current_user)
+
+    try:
+        async with cache_connection() as cache:
+            queue_service = QueueService(cache)
+            found = await queue_service.mark_send_now(str(chat_id), str(message_id))
+            if not found:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Queued message not found",
+                )
+    except CacheError as e:
+        logger.error("Redis error marking send-now: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service temporarily unavailable",
+        )
+
+    if not ChatStreamRuntime.is_chat_streaming(str(chat_id)):
+        try:
+            await ChatStreamRuntime.process_send_now_idle(
+                str(chat_id), chat_service.session_factory
+            )
+        except Exception as e:
+            logger.error("Failed to start idle send-now for chat %s: %s", chat_id, e)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Failed to start send-now execution",
+            )
+
+
 @router.delete(
     "/chats/{chat_id}/queue",
     status_code=status.HTTP_204_NO_CONTENT,

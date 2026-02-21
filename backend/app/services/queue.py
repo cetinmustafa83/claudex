@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from app.constants import (
     QUEUE_MESSAGE_TTL_SECONDS,
     REDIS_KEY_CHAT_QUEUE,
+    REDIS_KEY_CHAT_QUEUE_SEND_NOW,
 )
 from app.models.schemas.queue import QueueAddResponse, QueuedMessage
 
@@ -123,3 +124,47 @@ class QueueService:
         next_msg = queue[0]
         await self._write_queue(key, queue[1:])
         return next_msg
+
+    async def mark_send_now(self, chat_id: str, message_id: str) -> bool:
+        key = self._queue_key(chat_id)
+        queue = await self._read_queue(key)
+        if not any(item["id"] == message_id for item in queue):
+            return False
+
+        send_now_key = REDIS_KEY_CHAT_QUEUE_SEND_NOW.format(chat_id=chat_id)
+        await self.cache.set(send_now_key, message_id, ex=QUEUE_MESSAGE_TTL_SECONDS)
+        return True
+
+    async def pop_send_now_message(self, chat_id: str) -> dict[str, Any] | None:
+        send_now_key = REDIS_KEY_CHAT_QUEUE_SEND_NOW.format(chat_id=chat_id)
+        message_id = await self.cache.get(send_now_key)
+        if not message_id:
+            return None
+
+        await self.cache.delete(send_now_key)
+
+        key = self._queue_key(chat_id)
+        queue = await self._read_queue(key)
+        target = None
+        remaining = []
+        for item in queue:
+            if item["id"] == message_id and target is None:
+                target = item
+            else:
+                remaining.append(item)
+
+        if target is None:
+            return None
+
+        await self._write_queue(key, remaining)
+        return target
+
+    async def requeue_message(self, chat_id: str, message_data: dict[str, Any]) -> None:
+        key = self._queue_key(chat_id)
+        queue = await self._read_queue(key)
+        queue.insert(0, message_data)
+        await self._write_queue(key, queue)
+
+    async def clear_send_now(self, chat_id: str) -> None:
+        send_now_key = REDIS_KEY_CHAT_QUEUE_SEND_NOW.format(chat_id=chat_id)
+        await self.cache.delete(send_now_key)

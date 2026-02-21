@@ -37,6 +37,10 @@
 ## Code Style
 
 - Do not optimize for no regressions or long-term resilience unless explicitly requested — favor simple, direct changes over defensive scaffolding
+- Do not build elaborate rollback/state-restoration logic for failure paths — in a single-user app, a simple log + best-effort recovery (e.g., re-queue the item) is sufficient; do not save/restore every field, delete orphaned rows, or revert intermediate state changes
+- Do not add pre-flight compatibility checks that gate an operation when a natural fallback already exists — if the operation can't proceed, let it fall through to the existing path (e.g., normal queue processing) instead of adding branching to detect and re-route
+- Prefer the simplest collection operation that achieves the goal — use `list.insert(0, item)` instead of a sorted-insertion loop when ordering doesn't meaningfully matter
+- Keep `try/except` blocks narrow — only wrap the code that needs the specific recovery action (e.g., requeue after a pop), not the entire function body; code that can safely propagate exceptions should stay outside the `try`
 - Do not handle hypothetical input shapes — if you have evidence of the actual data format (logs, tests, type definitions), write code for that format only; do not add branches for types or structures you have not observed
 - Don't add comments or docstrings for self-explanatory code
 - Let the code speak for itself - use clear variable/function names instead of comments
@@ -185,6 +189,23 @@
 - Loading states: `animate-spin` for spinners, `animate-pulse` for skeletons, `animate-bounce` with staggered `animationDelay` for dot loaders
 - Expandable content: `transition-all duration-200` with `max-h-*` and `opacity` toggling
 - Dropdowns: `animate-fadeIn` for entry — no scale transforms on buttons
+
+## Code Review Guidelines
+
+### What to fix
+- Bugs that break user-visible behavior (wrong event ordering, dropped messages, stale UI state)
+- Correctness issues where the code silently continues into a broken state (e.g., swallowing an error that leaves client/server out of sync)
+- Missing TTLs or expiry on Redis keys that can leak forever
+- Dead code left behind by the change (unused imports, unreachable branches, orphaned constants)
+
+### What to skip
+- Orphaned DB rows from unlikely failure paths — in a single-user app, a stray empty message row is harmless; do not add delete-rollback logic
+- Concurrency edge cases (double-submit, multi-tab races, overlapping requests) — unless the task explicitly asks for concurrency hardening
+- Hypothetical compatibility mismatches — if a natural fallback already handles the case (e.g., normal queue processing), do not add pre-flight checks to detect and re-route
+- State-restoration rollback for failure paths — a simple log + best-effort recovery (re-queue) is sufficient; do not save/restore every field or revert intermediate changes
+
+### Complexity test
+Before flagging or fixing an issue, ask: "If this fails, does the user lose data or get stuck?" If the answer is no (e.g., an orphaned row, a briefly stale UI element), skip it. If the answer is yes (e.g., a queued message is silently dropped, the stream appears frozen), fix it.
 
 ## Completion Quality Gate
 

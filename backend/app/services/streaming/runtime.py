@@ -11,7 +11,13 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
-from app.constants import REDIS_KEY_CHAT_CONTEXT_USAGE, REDIS_KEY_CHAT_STREAM_LIVE
+from app.constants import (
+    REDIS_KEY_CHAT_CONTEXT_USAGE,
+    REDIS_KEY_CHAT_STREAM_LIVE,
+)
+from claude_agent_sdk import ClaudeSDKClient
+
+from app.services.transports import SandboxTransport
 from app.core.config import get_settings
 from app.utils.cache import CacheStore, cache_connection
 from app.db.session import SessionLocal
@@ -24,7 +30,11 @@ from app.models.db_models import (
 )
 from app.prompts.system_prompt import build_system_prompt_for_chat
 from claude_agent_sdk import CLIConnectionError, CLIJSONDecodeError
-from app.services.claude_agent import ClaudeAgentService, SessionParams
+from app.services.claude_agent import (
+    ClaudeAgentService,
+    SDK_PERMISSION_MODE_MAP,
+    SessionParams,
+)
 from app.services.db import SessionFactoryType
 from app.services.exceptions import ClaudeAgentException
 from app.services.message import MessageService
@@ -137,6 +147,7 @@ class ChatStreamRuntime:
         self.assistant_message_id = request.assistant_message_id
         self.user_id = str(chat.user_id)
         self.model_id = request.model_id
+        self.custom_instructions = request.custom_instructions
         self.sandbox_service = sandbox_service
         self.session_factory = session_factory
 
@@ -148,9 +159,12 @@ class ChatStreamRuntime:
         self.message_service = MessageService(session_factory=session_factory)
         self._event_buffer: list[tuple[str, dict[str, Any], dict[str, Any] | None]] = []
 
+        self.transport: SandboxTransport | None = None
+        self.client: ClaudeSDKClient | None = None
         self.cache: CacheStore | None = None
         self._cancel_event: asyncio.Event | None = None
         self._cancelled: bool = False
+        self._send_now_pending: bool = False
 
     async def run(
         self, ai_service: ClaudeAgentService, stream: AsyncIterator[StreamEvent]
@@ -204,13 +218,22 @@ class ChatStreamRuntime:
             while True:
                 event = await self._next_or_cancel(stream_iter)
                 if event is None:
+                    self._send_now_pending = False
                     break
+
+                if self._send_now_pending and self._is_assistant_turn_start(event):
+                    self._send_now_pending = False
+                    if await self._write_send_now(ai_service):
+                        continue
 
                 self.event_count += 1
                 kind = str(event.get("type") or "system")
                 payload = {k: v for k, v in event.items() if k != "type"}
                 await self.emit_event(kind, payload)
                 await self._flush_snapshot(force=False)
+
+                if not self._send_now_pending and self._is_send_now_eligible(event):
+                    self._send_now_pending = True
 
                 current_usage = ai_service.get_usage()
                 if current_usage is not None and current_usage is not last_usage:
@@ -220,6 +243,7 @@ class ChatStreamRuntime:
             if not (self._cancel_event and self._cancel_event.is_set()):
                 raise
             self._cancelled = True
+            self._send_now_pending = False
 
     @staticmethod
     def _cancel_task_if_running(
@@ -366,6 +390,13 @@ class ChatStreamRuntime:
         await self._save_final_snapshot(ai_service, status)
         final_content = self.snapshot.content_text
 
+        if status != MessageStreamStatus.COMPLETED and self.cache:
+            try:
+                queue_service = QueueService(self.cache)
+                await queue_service.clear_send_now(self.chat_id)
+            except Exception as exc:
+                logger.debug("Failed to clear send-now flag: %s", exc)
+
         if status == MessageStreamStatus.COMPLETED:
             await self._create_checkpoint()
             queue_processed = await self._process_next_queued()
@@ -388,6 +419,139 @@ class ChatStreamRuntime:
             )
 
         return final_content
+
+    @staticmethod
+    def _is_send_now_eligible(event: StreamEvent) -> bool:
+        if event.get("type") != "tool_completed":
+            return False
+        tool = event.get("tool", {})
+        if tool.get("parent_id"):
+            return False
+        return True
+
+    @staticmethod
+    def _is_assistant_turn_start(event: StreamEvent) -> bool:
+        event_type = event.get("type")
+        if event_type in ("assistant_text", "assistant_thinking"):
+            return True
+        if event_type == "tool_started":
+            tool = event.get("tool", {})
+            return not tool.get("parent_id")
+        return False
+
+    async def _write_send_now(self, ai_service: ClaudeAgentService) -> bool:
+        if not self.cache or not self.transport:
+            return False
+
+        queue_service = QueueService(self.cache)
+        queued_msg = await queue_service.pop_send_now_message(self.chat_id)
+        if not queued_msg:
+            return False
+
+        try:
+            await self._flush_event_buffer()
+
+            user_message = await self.message_service.create_message(
+                UUID(self.chat_id),
+                queued_msg["content"],
+                MessageRole.USER,
+                attachments=queued_msg.get("attachments"),
+            )
+            assistant_message = await self.message_service.create_message(
+                UUID(self.chat_id),
+                "",
+                MessageRole.ASSISTANT,
+                model_id=queued_msg["model_id"],
+                stream_status=MessageStreamStatus.IN_PROGRESS,
+            )
+
+            if self.client:
+                queued_model = queued_msg.get("model_id")
+                if queued_model:
+                    resolved_model = queued_model.split(":", 1)[-1]
+                    if resolved_model != self.model_id:
+                        await self.client.set_model(resolved_model)
+                        self.model_id = resolved_model
+                queued_permission = queued_msg.get("permission_mode")
+                if queued_permission:
+                    sdk_permission = SDK_PERMISSION_MODE_MAP.get(
+                        queued_permission, "bypassPermissions"
+                    )
+                    await self.client.set_permission_mode(sdk_permission)
+
+            prompt = ai_service.prepare_user_prompt(
+                queued_msg["content"],
+                self.custom_instructions,
+                queued_msg.get("attachments"),
+            )
+            injection = {
+                "type": "user",
+                "message": {"role": "user", "content": prompt},
+                "parent_tool_use_id": None,
+                "session_id": self.session_container.get("session_id"),
+            }
+            await self.transport.write(json.dumps(injection) + "\n")
+
+            await self.message_service.update_message_snapshot(
+                UUID(self.assistant_message_id),
+                content_text=self.snapshot.content_text,
+                content_render=self.snapshot.to_render(),
+                last_seq=self.last_seq,
+                active_stream_id=None,
+                stream_status=MessageStreamStatus.COMPLETED,
+            )
+            await self._create_checkpoint()
+
+            await self.emit_event(
+                "queue_processing",
+                {
+                    "queued_message_id": queued_msg["id"],
+                    "user_message_id": str(user_message.id),
+                    "assistant_message_id": str(assistant_message.id),
+                    "content": queued_msg["content"],
+                    "model_id": queued_msg["model_id"],
+                    "attachments": MessageService.serialize_attachments(
+                        queued_msg, user_message
+                    ),
+                    "send_now": True,
+                },
+                apply_snapshot=False,
+            )
+
+            self.assistant_message_id = str(assistant_message.id)
+            self.stream_id = uuid4()
+            self.snapshot = StreamSnapshotAccumulator()
+            self.pending_since_flush = 0
+            self.last_flush_at = time.monotonic()
+            self._event_buffer = []
+            self.last_seq = 0
+
+            start_seq = await self.emit_event(
+                "stream_started",
+                {"status": "started"},
+                apply_snapshot=False,
+            )
+            await self.message_service.update_message_snapshot(
+                UUID(self.assistant_message_id),
+                content_text="",
+                content_render=self.snapshot.to_render(),
+                last_seq=start_seq,
+                active_stream_id=self.stream_id,
+            )
+        except Exception as exc:
+            logger.error("Failed to process send-now message: %s", exc)
+            try:
+                await queue_service.requeue_message(self.chat_id, queued_msg)
+            except Exception as requeue_exc:
+                logger.error("Failed to re-queue message: %s", requeue_exc)
+            return False
+
+        logger.info(
+            "Send-now message %s written for chat %s",
+            queued_msg["id"],
+            self.chat_id,
+        )
+        return True
 
     async def _create_checkpoint(self) -> None:
         if not (
@@ -418,7 +582,9 @@ class ChatStreamRuntime:
         try:
             async with cache_connection() as cache:
                 queue_service = QueueService(cache)
-                next_msg = await queue_service.pop_next_message(self.chat_id)
+                next_msg = await queue_service.pop_send_now_message(self.chat_id)
+                if not next_msg:
+                    next_msg = await queue_service.pop_next_message(self.chat_id)
             if not next_msg:
                 return False
 
@@ -645,6 +811,104 @@ class ChatStreamRuntime:
         )
         return resolved_task_id
 
+    @classmethod
+    def is_chat_streaming(cls, chat_id: str) -> bool:
+        return any(
+            cid == chat_id
+            for task, cid in cls._background_task_chat_ids.items()
+            if not task.done()
+        )
+
+    @classmethod
+    async def process_send_now_idle(
+        cls,
+        chat_id: str,
+        session_factory: SessionFactoryType,
+    ) -> bool:
+        if cls.is_chat_streaming(chat_id):
+            return False
+
+        async with cache_connection() as cache:
+            queue_service = QueueService(cache)
+            queued_msg = await queue_service.pop_send_now_message(chat_id)
+            if not queued_msg:
+                return False
+
+        try:
+            message_service = MessageService(session_factory=session_factory)
+            await message_service.create_message(
+                UUID(chat_id),
+                queued_msg["content"],
+                MessageRole.USER,
+                attachments=queued_msg.get("attachments"),
+            )
+            assistant_message = await message_service.create_message(
+                UUID(chat_id),
+                "",
+                MessageRole.ASSISTANT,
+                model_id=queued_msg["model_id"],
+                stream_status=MessageStreamStatus.IN_PROGRESS,
+            )
+
+            async with session_factory() as db:
+                chat = await db.get(Chat, UUID(chat_id))
+                if not chat:
+                    raise ClaudeAgentException(
+                        f"Chat {chat_id} not found for idle send-now"
+                    )
+
+            user_service = UserService(session_factory=session_factory)
+            user_settings = await user_service.get_user_settings(chat.user_id, db=None)
+
+            system_prompt = build_system_prompt_for_chat(
+                chat.sandbox_id or "",
+                user_settings,
+            )
+
+            cls.start_background_chat(
+                ChatStreamRequest(
+                    prompt=queued_msg["content"],
+                    system_prompt=system_prompt,
+                    custom_instructions=(
+                        user_settings.custom_instructions if user_settings else None
+                    ),
+                    chat_data={
+                        "id": chat_id,
+                        "user_id": str(chat.user_id),
+                        "title": chat.title,
+                        "sandbox_id": chat.sandbox_id,
+                        "session_id": chat.session_id,
+                    },
+                    permission_mode=queued_msg.get("permission_mode", "auto"),
+                    model_id=queued_msg["model_id"],
+                    session_id=chat.session_id,
+                    assistant_message_id=str(assistant_message.id),
+                    thinking_mode=queued_msg.get("thinking_mode"),
+                    attachments=queued_msg.get("attachments"),
+                    is_custom_prompt=False,
+                )
+            )
+
+            logger.info(
+                "Idle send-now: message %s started for chat %s",
+                queued_msg["id"],
+                chat_id,
+            )
+            return True
+
+        except Exception:
+            try:
+                async with cache_connection() as cache:
+                    queue_service = QueueService(cache)
+                    await queue_service.requeue_message(chat_id, queued_msg)
+                    logger.info(
+                        "Re-queued message %s after idle send-now failure",
+                        queued_msg["id"],
+                    )
+            except Exception as requeue_exc:
+                logger.error("Failed to re-queue message: %s", requeue_exc)
+            raise
+
     @staticmethod
     async def _mark_message_failed(
         *,
@@ -734,6 +998,8 @@ class ChatStreamRuntime:
                         session.cancel_event.set()
                     runtime._cancel_event = session.cancel_event
                     session.active_generation_task = asyncio.current_task()
+                    runtime.transport = session.transport
+                    runtime.client = session.client
                     stream: AsyncIterator[StreamEvent] | None = None
                     try:
                         if params.options.model:

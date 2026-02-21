@@ -20,6 +20,7 @@ interface MessageQueueState {
   removeMessage: (chatId: string, messageId: string) => Promise<void>;
   clearAndSync: (chatId: string) => Promise<void>;
   getQueue: (chatId: string) => LocalQueuedMessage[];
+  sendNow: (chatId: string, messageId: string) => Promise<boolean>;
   clearQueue: (chatId: string) => void;
   fetchQueue: (chatId: string) => Promise<void>;
   syncPendingMessages: (chatId: string) => Promise<void>;
@@ -48,6 +49,7 @@ export const useMessageQueueStore = create<MessageQueueState>((set, get) => ({
       files,
       queuedAt: Date.now(),
       synced: false,
+      sendingNow: false,
     };
 
     set((state) => {
@@ -167,6 +169,48 @@ export const useMessageQueueStore = create<MessageQueueState>((set, get) => ({
     }
   },
 
+  sendNow: async (chatId: string, messageId: string): Promise<boolean> => {
+    const queue = get().queues.get(chatId) || [];
+    const message = queue.find((m) => m.id === messageId);
+    if (!message?.synced) return false;
+
+    const resetSendingNow = () => {
+      set((state) => {
+        const nextQueues = new Map(state.queues);
+        const currentQueue = nextQueues.get(chatId) || [];
+        nextQueues.set(
+          chatId,
+          currentQueue.map((msg) => (msg.id === messageId ? { ...msg, sendingNow: false } : msg)),
+        );
+        return { queues: nextQueues };
+      });
+    };
+
+    set((state) => {
+      const nextQueues = new Map(state.queues);
+      const currentQueue = nextQueues.get(chatId) || [];
+      nextQueues.set(
+        chatId,
+        currentQueue.map((msg) => (msg.id === messageId ? { ...msg, sendingNow: true } : msg)),
+      );
+      return { queues: nextQueues };
+    });
+
+    const timeout = window.setTimeout(resetSendingNow, 30_000);
+
+    try {
+      await queueService.sendNow(chatId, messageId);
+      clearTimeout(timeout);
+      resetSendingNow();
+      return true;
+    } catch (error) {
+      console.error('Failed to send now:', error);
+      clearTimeout(timeout);
+      resetSendingNow();
+      return false;
+    }
+  },
+
   removeLocalOnly: (chatId: string, messageId: string) => {
     set((state) => {
       const nextQueues = new Map(state.queues);
@@ -223,6 +267,7 @@ export const useMessageQueueStore = create<MessageQueueState>((set, get) => ({
           attachments: msg.attachments,
           queuedAt: new Date(msg.queued_at).getTime(),
           synced: true,
+          sendingNow: false,
         }));
 
         const merged = [...syncedMessages, ...pendingMessages];

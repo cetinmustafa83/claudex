@@ -74,6 +74,15 @@ async function deleteQueuedMessage(chatId: string, messageId: string): Promise<v
   });
 }
 
+async function sendNow(chatId: string, messageId: string): Promise<void> {
+  validateId(chatId, 'Chat ID');
+  validateId(messageId, 'Message ID');
+
+  await serviceCall(async () => {
+    await apiClient.post(`/chat/chats/${chatId}/queue/${messageId}/send-now`);
+  });
+}
+
 async function clearQueue(chatId: string): Promise<void> {
   validateId(chatId, 'Chat ID');
 
@@ -87,5 +96,6 @@ export const queueService = {
   getQueue,
   updateQueuedMessage,
   deleteQueuedMessage,
+  sendNow,
   clearQueue,
 };

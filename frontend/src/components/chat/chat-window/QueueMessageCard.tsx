@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useRef, useEffect } from 'react';
-import { X, Pencil, CornerDownRight, FileText, FileSpreadsheet } from 'lucide-react';
+import { X, Pencil, CornerDownRight, FileText, FileSpreadsheet, Send } from 'lucide-react';
 import { Button } from '@/components/ui/primitives/Button';
 import { Spinner } from '@/components/ui/primitives/Spinner';
 import { apiClient } from '@/lib/api';
@@ -15,6 +15,7 @@ interface QueueMessageCardProps {
   message: LocalQueuedMessage;
   onCancel: (messageId: string) => void;
   onEdit: (messageId: string, newContent: string) => void;
+  onSendNow: (messageId: string) => void;
 }
 
 function UploadingOverlay() {
@@ -179,6 +180,7 @@ export const QueueMessageCard = memo(function QueueMessageCard({
   message,
   onCancel,
   onEdit,
+  onSendNow,
 }: QueueMessageCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -265,7 +267,12 @@ export const QueueMessageCard = memo(function QueueMessageCard({
           )}
         </div>
         <div className="flex flex-shrink-0 items-center gap-1">
-          {isEditing ? (
+          {message.sendingNow ? (
+            <span className="flex items-center gap-1.5 px-1 text-2xs text-text-quaternary dark:text-text-dark-quaternary">
+              <Spinner size="xs" />
+              Sending...
+            </span>
+          ) : isEditing ? (
             <>
               <Button
                 onClick={handleSaveEdit}
@@ -284,6 +291,16 @@ export const QueueMessageCard = memo(function QueueMessageCard({
             </>
           ) : (
             <>
+              {message.synced && (
+                <Button
+                  onClick={() => onSendNow(message.id)}
+                  variant="ghost"
+                  className="h-6 rounded-md px-2 py-0 text-text-tertiary hover:text-text-primary dark:text-text-dark-tertiary dark:hover:text-text-dark-primary"
+                  aria-label="Send now"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                </Button>
+              )}
               <Button
                 onClick={handleStartEdit}
                 variant="ghost"

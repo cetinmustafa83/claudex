@@ -7,6 +7,7 @@ import React, {
   useMemo,
   type ReactNode,
 } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useShallow } from 'zustand/react/shallow';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { isBrowserObjectUrl } from '@/utils/attachmentUrl';
@@ -28,6 +29,7 @@ import {
   useChatSessionActions,
 } from '@/hooks/useChatSessionContext';
 import { useChatInputMessageContext } from '@/hooks/useChatInputMessageContext';
+import { queryKeys } from '@/hooks/queries/queryKeys';
 
 const AT_BOTTOM_THRESHOLD_PX = 200;
 const INITIAL_FIRST_ITEM_INDEX = 1_000_000;
@@ -71,6 +73,7 @@ interface VirtuosoContextValue {
 export const Chat = memo(function Chat() {
   const { chatId } = useChatContext();
   const { state, actions } = useChatSessionContext();
+  const queryClient = useQueryClient();
 
   const {
     messages,
@@ -138,6 +141,18 @@ export const Chat = memo(function Chat() {
       }
     },
     [chatId],
+  );
+
+  const handleSendNow = useCallback(
+    async (messageId: string) => {
+      if (!chatId) return;
+      const success = await useMessageQueueStore.getState().sendNow(chatId, messageId);
+      if (success && !isStreaming) {
+        useMessageQueueStore.getState().removeLocalOnly(chatId, messageId);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.messages(chatId) });
+      }
+    },
+    [chatId, isStreaming, queryClient],
   );
 
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
@@ -448,6 +463,7 @@ export const Chat = memo(function Chat() {
                       message={pending}
                       onCancel={handleCancelMessage}
                       onEdit={handleEditMessage}
+                      onSendNow={handleSendNow}
                     />
                   ))}
                 </div>
