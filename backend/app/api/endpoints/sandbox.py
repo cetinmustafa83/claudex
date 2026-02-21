@@ -16,7 +16,11 @@ from app.models.schemas.sandbox import (
     UpdateSecretRequest,
     VNCUrlResponse,
 )
-from app.models.schemas.secrets import MessageResponse, SecretResponse, SecretsListResponse
+from app.models.schemas.secrets import (
+    MessageResponse,
+    SecretResponse,
+    SecretsListResponse,
+)
 from app.services.exceptions import SandboxException
 from app.services.sandbox import SandboxService
 
@@ -128,7 +132,9 @@ async def update_file_in_sandbox(
     sandbox_service: SandboxService = Depends(get_sandbox_service),
 ) -> UpdateFileResponse:
     try:
-        await sandbox_service.provider.write_file(sandbox_id, request.file_path, request.content)
+        await sandbox_service.provider.write_file(
+            sandbox_id, request.file_path, request.content
+        )
         return UpdateFileResponse(
             success=True, message=f"File {request.file_path} updated successfully"
         )

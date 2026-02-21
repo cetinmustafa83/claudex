@@ -574,7 +574,9 @@ class SandboxService:
         connection_token = secrets.token_urlsafe(32)
         self._ide_tokens[sandbox_id] = connection_token
 
-        await self.provider.write_file(sandbox_id, SANDBOX_IDE_TOKEN_PATH, connection_token)
+        await self.provider.write_file(
+            sandbox_id, SANDBOX_IDE_TOKEN_PATH, connection_token
+        )
 
         settings_content = json.dumps(OPENVSCODE_DEFAULT_SETTINGS, indent=2)
         escaped_settings = settings_content.replace("'", "'\"'\"'")
@@ -597,7 +599,9 @@ class SandboxService:
             "window.autoDetectColorScheme": False,
         }
         settings_content = json.dumps(settings, indent=2)
-        await self.provider.write_file(sandbox_id, SANDBOX_IDE_SETTINGS_PATH, settings_content)
+        await self.provider.write_file(
+            sandbox_id, SANDBOX_IDE_SETTINGS_PATH, settings_content
+        )
         logger.info("IDE theme updated to: %s", vscode_theme)
 
     async def _setup_claude_config(
@@ -642,7 +646,9 @@ class SandboxService:
     async def _setup_openai_auth(self, sandbox_id: str, openai_auth_json: str) -> None:
         openai_dir = f"{SANDBOX_HOME_DIR}/.codex"
         await self.execute_command(sandbox_id, f"mkdir -p {openai_dir}")
-        await self.provider.write_file(sandbox_id, f"{openai_dir}/auth.json", openai_auth_json)
+        await self.provider.write_file(
+            sandbox_id, f"{openai_dir}/auth.json", openai_auth_json
+        )
         await self.execute_command(sandbox_id, f"sudo chown -R user:user {openai_dir}")
 
     async def _setup_gmail_mcp(

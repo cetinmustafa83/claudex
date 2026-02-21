@@ -167,7 +167,9 @@ class ClaudeAgentService:
             session_factory=self.session_factory
         ).get_user_settings(user.id)
 
-        sandbox_provider = user_settings.sandbox_provider or SandboxProviderType.DOCKER.value
+        sandbox_provider = (
+            user_settings.sandbox_provider or SandboxProviderType.DOCKER.value
+        )
         sandbox_id = chat.sandbox_id
         if not sandbox_id:
             raise ClaudeAgentException(

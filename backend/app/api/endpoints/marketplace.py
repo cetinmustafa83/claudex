@@ -84,9 +84,7 @@ async def install_plugin_components(
     installer_service: PluginInstallerService = Depends(get_plugin_installer_service),
     user_service: UserService = Depends(get_user_service),
 ) -> InstallResponse:
-    user_settings = await load_user_settings_or_404(
-        user_service, current_user.id, db
-    )
+    user_settings = await load_user_settings_or_404(user_service, current_user.id, db)
 
     current_agents = cast(
         list[CustomAgentDict], list(user_settings.custom_agents or [])
@@ -98,9 +96,7 @@ async def install_plugin_components(
     current_skills = cast(
         list[CustomSkillDict], list(user_settings.custom_skills or [])
     )
-    current_mcps = cast(
-        list[CustomMcpDict], list(user_settings.custom_mcps or [])
-    )
+    current_mcps = cast(list[CustomMcpDict], list(user_settings.custom_mcps or []))
 
     try:
         details = await marketplace_service.get_plugin_details(request.plugin_name)
@@ -121,7 +117,6 @@ async def install_plugin_components(
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
     if result.installed:
-
         if user_settings.custom_agents is None:
             user_settings.custom_agents = []
         for agent in result.new_agents:

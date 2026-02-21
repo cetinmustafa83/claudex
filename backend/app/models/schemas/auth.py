@@ -1,7 +1,14 @@
 from uuid import UUID
 
 from fastapi_users import schemas
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    computed_field,
+    field_validator,
+)
 
 from app.core.config import get_settings
 

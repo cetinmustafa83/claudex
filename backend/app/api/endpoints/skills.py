@@ -1,6 +1,6 @@
 from typing import cast
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.endpoints._shared import (
     load_settings_list_or_404,

@@ -99,9 +99,7 @@ Guidelines for suggestions:
         env_section = SystemPromptBuilder.env_vars_section(env_vars_formatted)
         suggestions_section = SystemPromptBuilder.prompt_suggestions_section()
 
-        custom_section = (
-            f"\n{custom_prompt_content}\n" if custom_prompt_content else ""
-        )
+        custom_section = f"\n{custom_prompt_content}\n" if custom_prompt_content else ""
 
         return f"""
 {custom_section}

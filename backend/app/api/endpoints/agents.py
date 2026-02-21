@@ -12,7 +12,11 @@ from app.core.deps import get_db, get_agent_service, get_user_service
 from app.core.security import get_current_user
 from app.models.db_models.enums import DeleteResponseStatus
 from app.models.db_models.user import User
-from app.models.schemas.agents import AgentDeleteResponse, AgentResponse, AgentUpdateRequest
+from app.models.schemas.agents import (
+    AgentDeleteResponse,
+    AgentResponse,
+    AgentUpdateRequest,
+)
 from app.models.types import CustomAgentDict
 from app.services.exceptions import AgentException
 from app.services.agent import AgentService
