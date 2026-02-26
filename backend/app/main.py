@@ -111,6 +111,8 @@ def create_application() -> FastAPI:
             "Failed to create storage directory at %s: %s", settings.STORAGE_PATH, e
         )
 
+    _mount_admin(application)
+
     setup_middleware(application)
 
     application.include_router(
@@ -181,8 +183,6 @@ def create_application() -> FastAPI:
         tags=["Integrations"],
     )
     application.openapi = partial(custom_openapi, application)
-
-    _mount_admin(application)
 
     application.add_api_route("/health", health_check, methods=["GET"])
     application.add_api_route(f"{settings.API_V1_STR}/readyz", readyz, methods=["GET"])

@@ -44,6 +44,12 @@ export default defineConfig({
         ws: true,
         secure: false,
       },
+      '/admin': {
+        target: 'http://api:8080',
+        changeOrigin: false,
+        secure: false,
+        autoRewrite: true,
+      },
     },
   },
 });
