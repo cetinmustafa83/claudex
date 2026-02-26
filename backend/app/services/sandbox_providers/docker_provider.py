@@ -27,6 +27,7 @@ from app.services.sandbox_providers.types import (
     CommandResult,
     DockerConfig,
     FileContent,
+    FileMetadata,
     PreviewLink,
     PtyDataCallbackType,
     PtySession,
@@ -45,6 +46,7 @@ class LocalDockerProvider(SandboxProvider):
         self._containers: dict[str, Any] = {}
         self._pty_sessions: dict[str, dict[str, Any]] = {}
         self._port_mappings: dict[str, dict[int, int]] = {}
+        self._workspace_mounts: dict[str, str] = {}
         self._docker: aiodocker.Docker | None = None
         self._docker_loop: AbstractEventLoop | None = None
 
@@ -200,6 +202,16 @@ class LocalDockerProvider(SandboxProvider):
         await container.start()
         return container
 
+    async def _sync_workspace_mount(self, sandbox_id: str, container: Any) -> None:
+        workspace_mount_dir = f"{self.config.user_home}/workspace"
+        info = await container.show()
+        mounts = info.get("Mounts", []) or []
+        for mount in mounts:
+            if mount.get("Destination") == workspace_mount_dir:
+                self._workspace_mounts[sandbox_id] = workspace_mount_dir
+                return
+        self._workspace_mounts.pop(sandbox_id, None)
+
     async def create_sandbox(self, workspace_path: str | None = None) -> str:
         sandbox_id = str(uuid.uuid4())[:12]
 
@@ -208,6 +220,12 @@ class LocalDockerProvider(SandboxProvider):
                 sandbox_id, workspace_path=workspace_path
             )
             self._containers[sandbox_id] = container
+            if workspace_path:
+                self._workspace_mounts[sandbox_id] = (
+                    f"{self.config.user_home}/workspace"
+                )
+            else:
+                self._workspace_mounts.pop(sandbox_id, None)
 
             port_map = await self._extract_port_mappings(container)
             self._port_mappings[sandbox_id] = port_map
@@ -258,6 +276,7 @@ class LocalDockerProvider(SandboxProvider):
             self._port_mappings[sandbox_id] = await self._extract_port_mappings(
                 container
             )
+            await self._sync_workspace_mount(sandbox_id, container)
             return True
 
         return False
@@ -276,8 +295,20 @@ class LocalDockerProvider(SandboxProvider):
 
         self._containers.pop(sandbox_id, None)
         self._port_mappings.pop(sandbox_id, None)
+        self._workspace_mounts.pop(sandbox_id, None)
 
         logger.info("Successfully deleted Docker sandbox %s", sandbox_id)
+
+    async def list_files(
+        self,
+        sandbox_id: str,
+        path: str = SANDBOX_HOME_DIR,
+        excluded_patterns: list[str] | None = None,
+    ) -> list[FileMetadata]:
+        target_path = path
+        if path == SANDBOX_HOME_DIR:
+            target_path = self._workspace_mounts.get(sandbox_id, SANDBOX_HOME_DIR)
+        return await super().list_files(sandbox_id, target_path, excluded_patterns)
 
     async def is_running(self, sandbox_id: str) -> bool:
         await self._get_docker()
