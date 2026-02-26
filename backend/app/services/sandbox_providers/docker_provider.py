@@ -287,6 +287,7 @@ class LocalDockerProvider(SandboxProvider):
         excluded_patterns: list[str] | None = None,
     ) -> list[FileMetadata]:
         target_path = path
+        is_workspace_root = False
         if path == SANDBOX_HOME_DIR:
             container = await self._get_container(sandbox_id)
             workspace_mount_dir = f"{self.config.user_home}/workspace"
@@ -294,7 +295,31 @@ class LocalDockerProvider(SandboxProvider):
             mounts = info.get("Mounts", []) or []
             if any(mount.get("Destination") == workspace_mount_dir for mount in mounts):
                 target_path = workspace_mount_dir
-        return await super().list_files(sandbox_id, target_path, excluded_patterns)
+                is_workspace_root = True
+
+        metadata_items = await super().list_files(
+            sandbox_id, target_path, excluded_patterns
+        )
+        if not is_workspace_root:
+            return metadata_items
+
+        flattened_items: list[FileMetadata] = []
+        for item in metadata_items:
+            if item.path == "workspace":
+                continue
+            if item.path.startswith("workspace/"):
+                flattened_items.append(
+                    FileMetadata(
+                        path=item.path[len("workspace/") :],
+                        type=item.type,
+                        size=item.size,
+                        modified=item.modified,
+                        is_binary=item.is_binary,
+                    )
+                )
+                continue
+            flattened_items.append(item)
+        return flattened_items
 
     async def is_running(self, sandbox_id: str) -> bool:
         await self._get_docker()
