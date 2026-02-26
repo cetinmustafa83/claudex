@@ -82,4 +82,5 @@ backend/*beat-schedule*
 .ide_connection_token
 .npm/
 .openvscode-server/
+.git-askpass.sh
 Library/
