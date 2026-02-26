@@ -34,6 +34,7 @@ export const BrowserView = memo(function BrowserView({
     data: vncUrl,
     refetch: refetchVncUrl,
     isFetching: isFetchingUrl,
+    isFetched: isVncFetched,
   } = useVNCUrlQuery(sandboxId || '', { enabled: !!sandboxId && isActive });
 
   const { data: browserStatus } = useBrowserStatusQuery(sandboxId || '', {
@@ -165,37 +166,45 @@ export const BrowserView = memo(function BrowserView({
 
         {!isBrowserRunning && !isConnecting && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-surface-secondary dark:bg-surface-dark-secondary">
-            <Globe className="h-6 w-6 text-text-quaternary dark:text-text-dark-quaternary" />
-            <div className="flex flex-col items-center gap-1">
-              <span className="text-xs font-medium text-text-secondary dark:text-text-dark-secondary">
-                Start a browser session
+            {isVncFetched && !vncUrl ? (
+              <span className="text-xs text-text-tertiary dark:text-text-dark-tertiary">
+                Browser is not available
               </span>
-              <span className="text-2xs text-text-quaternary dark:text-text-dark-quaternary">
-                Enter a URL to browse
-              </span>
-            </div>
-            <input
-              type="text"
-              value={browserUrl}
-              onChange={(e) => setBrowserUrl(e.target.value)}
-              placeholder="https://example.com"
-              aria-label="Browser URL"
-              className="w-72 rounded-lg border border-border/50 bg-transparent px-3 py-1.5 font-mono text-xs text-text-primary outline-none transition-colors duration-200 focus:border-border-hover dark:border-border-dark/50 dark:text-text-dark-primary dark:focus:border-border-dark-hover"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !startBrowserMutation.isPending) {
-                  handleStartBrowser();
-                }
-              }}
-            />
-            <Button
-              onClick={handleStartBrowser}
-              variant="unstyled"
-              disabled={startBrowserMutation.isPending}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors duration-200 hover:bg-surface-hover hover:text-text-primary disabled:opacity-50 dark:text-text-dark-secondary dark:hover:bg-surface-dark-hover dark:hover:text-text-dark-primary"
-            >
-              <Play className="h-3.5 w-3.5" />
-              Start Browser
-            </Button>
+            ) : (
+              <>
+                <Globe className="h-6 w-6 text-text-quaternary dark:text-text-dark-quaternary" />
+                <div className="flex flex-col items-center gap-1">
+                  <span className="text-xs font-medium text-text-secondary dark:text-text-dark-secondary">
+                    Start a browser session
+                  </span>
+                  <span className="text-2xs text-text-quaternary dark:text-text-dark-quaternary">
+                    Enter a URL to browse
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  value={browserUrl}
+                  onChange={(e) => setBrowserUrl(e.target.value)}
+                  placeholder="https://example.com"
+                  aria-label="Browser URL"
+                  className="w-72 rounded-lg border border-border/50 bg-transparent px-3 py-1.5 font-mono text-xs text-text-primary outline-none transition-colors duration-200 focus:border-border-hover dark:border-border-dark/50 dark:text-text-dark-primary dark:focus:border-border-dark-hover"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !startBrowserMutation.isPending) {
+                      handleStartBrowser();
+                    }
+                  }}
+                />
+                <Button
+                  onClick={handleStartBrowser}
+                  variant="unstyled"
+                  disabled={startBrowserMutation.isPending}
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors duration-200 hover:bg-surface-hover hover:text-text-primary disabled:opacity-50 dark:text-text-dark-secondary dark:hover:bg-surface-dark-hover dark:hover:text-text-dark-primary"
+                >
+                  <Play className="h-3.5 w-3.5" />
+                  Start Browser
+                </Button>
+              </>
+            )}
           </div>
         )}
 

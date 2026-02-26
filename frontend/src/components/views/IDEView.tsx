@@ -151,14 +151,22 @@ export const IDEView = memo(function IDEView({ sandboxId, isActive = false }: ID
             />
           </div>
         )}
-        <iframe
-          key={iframeKey}
-          src={ideUrl || undefined}
-          className="h-full w-full border-0"
-          title="OpenVSCode IDE"
-          allow="clipboard-read; clipboard-write"
-          onLoad={handleLoad}
-        />
+        {isFetched && !ideUrl ? (
+          <div className="flex h-full items-center justify-center">
+            <span className="text-xs text-text-tertiary dark:text-text-dark-tertiary">
+              OpenVSCode Server is not installed
+            </span>
+          </div>
+        ) : (
+          <iframe
+            key={iframeKey}
+            src={ideUrl || undefined}
+            className="h-full w-full border-0"
+            title="OpenVSCode IDE"
+            allow="clipboard-read; clipboard-write"
+            onLoad={handleLoad}
+          />
+        )}
       </div>
     </div>
   );
