@@ -141,6 +141,8 @@ class ChatStreamRuntime:
         self.session_container: dict[str, Any] = {"session_id": request.session_id}
         self.assistant_message_id = request.assistant_message_id
         self.model_id = request.model_id
+        self.prompt = request.prompt
+        self._is_new_chat = request.session_id is None
         self.custom_instructions = request.custom_instructions
         self.sandbox_service = sandbox_service
         self.session_factory = session_factory
@@ -391,6 +393,7 @@ class ChatStreamRuntime:
 
         if status == MessageStreamStatus.COMPLETED:
             await self._create_checkpoint()
+            await self._generate_title()
             queue_processed = await self._process_next_queued()
             if not queue_processed:
                 await self._emit_context_usage(ai_service)
@@ -699,6 +702,37 @@ class ChatStreamRuntime:
             logger.debug(
                 "Context usage update failed for chat %s: %s", self.chat_id, exc
             )
+
+    async def _generate_title(self) -> None:
+        if not self.prompt or not self._is_new_chat:
+            return
+
+        ai_service = ClaudeAgentService(session_factory=self.session_factory)
+        user = User(id=self.chat.user_id)
+        title = await ai_service.generate_title(self.prompt, user)
+        if not title:
+            return
+
+        try:
+            async with self.session_factory() as db:
+                result = await db.execute(
+                    select(Chat).filter(Chat.id == self.chat.id)
+                )
+                chat = result.scalar_one_or_none()
+                if not chat:
+                    return
+                chat.title = title
+                db.add(chat)
+                await db.commit()
+        except SQLAlchemyError as exc:
+            logger.debug("Title DB update failed for chat %s: %s", self.chat_id, exc)
+            return
+
+        await self.emit_event(
+            "system",
+            {"chat_title": title, "chat_id": self.chat_id},
+            apply_snapshot=False,
+        )
 
     @classmethod
     async def stop_background_chats(cls) -> None:
