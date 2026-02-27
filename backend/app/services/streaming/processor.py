@@ -74,7 +74,10 @@ class StreamProcessor:
         if isinstance(message, ResultMessage):
             if message.total_cost_usd is not None:
                 self.total_cost_usd = message.total_cost_usd
-            if message.usage is not None:
+            # Only use ResultMessage usage if we have no per-turn usage from
+            # AssistantMessage. ResultMessage.usage contains cumulative totals
+            # across all API calls, not the current context window size.
+            if message.usage is not None and self.usage is None:
                 self.usage = message.usage
 
     @staticmethod
