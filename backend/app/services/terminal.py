@@ -1,0 +1,270 @@
+import asyncio
+import json
+import logging
+import shlex
+from asyncio import QueueEmpty, QueueFull
+from dataclasses import dataclass
+from functools import partial
+from typing import Callable, TypeVar, cast
+
+from fastapi import WebSocket
+
+from app.constants import PTY_INPUT_QUEUE_SIZE, PTY_OUTPUT_QUEUE_SIZE
+from app.services.exceptions import SandboxException
+from app.services.sandbox import SandboxService
+from app.services.sandbox_providers import LocalHostProvider, SandboxProviderType
+from app.services.sandbox_providers.factory import SandboxProviderFactory
+
+logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+@dataclass
+class TerminalSessionRecord:
+    user_id: str
+    sandbox_id: str
+    terminal_id: str
+    sandbox_service: SandboxService
+    on_close: Callable[[], None]
+    pty_id: str | None = None
+    output_task: asyncio.Task[None] | None = None
+    output_queue: asyncio.Queue[str] | None = None
+    input_task: asyncio.Task[None] | None = None
+    input_queue: asyncio.Queue[bytes] | None = None
+    active_websocket: WebSocket | None = None
+    tmux_session_name: str | None = None
+
+    async def ensure_started(self, rows: int, cols: int) -> bool:
+        if self.pty_id is None:
+            tmux_session = self._get_tmux_session_name()
+            self.output_queue = asyncio.Queue(maxsize=PTY_OUTPUT_QUEUE_SIZE)
+            self.pty_id = await self.sandbox_service.create_pty_session(
+                self.sandbox_id,
+                rows,
+                cols,
+                tmux_session,
+                on_data=self._enqueue_output,
+            )
+            self.input_queue = asyncio.Queue(maxsize=PTY_INPUT_QUEUE_SIZE)
+            self.input_task = asyncio.create_task(self._input_worker(self.pty_id))
+            self.input_task.add_done_callback(self._handle_input_task_done)
+            return False
+
+        await self.resize(rows, cols)
+        return True
+
+    def enqueue_input(self, data: bytes) -> None:
+        if not self.input_queue:
+            return
+        self._force_enqueue(self.input_queue, data)
+
+    async def resize(self, rows: int, cols: int) -> None:
+        if not self.pty_id:
+            return
+        await self.sandbox_service.resize_pty_session(
+            self.sandbox_id,
+            self.pty_id,
+            rows,
+            cols,
+        )
+
+    async def attach(self, websocket: WebSocket) -> None:
+        if self.active_websocket and self.active_websocket is not websocket:
+            try:
+                await self.active_websocket.close()
+            except (RuntimeError, OSError):
+                pass
+
+        self.active_websocket = websocket
+
+        if not self.pty_id:
+            return
+
+        if self.output_task:
+            self.output_task.cancel()
+
+        self.output_task = asyncio.create_task(self._forward_output(websocket))
+
+    async def detach(self) -> None:
+        self.active_websocket = None
+        if self.output_task:
+            self.output_task.cancel()
+            self.output_task = None
+
+    async def close(self) -> None:
+        self.active_websocket = None
+
+        if self.output_task:
+            self.output_task.cancel()
+            self.output_task = None
+
+        if self.input_task:
+            self.input_task.cancel()
+            try:
+                await self.input_task
+            except asyncio.CancelledError:
+                pass
+            self.input_task = None
+
+        self.input_queue = None
+        self.output_queue = None
+
+        if self.pty_id:
+            await self.sandbox_service.cleanup_pty_session(self.sandbox_id, self.pty_id)
+            self.pty_id = None
+
+        await self.sandbox_service.cleanup()
+
+        self.on_close()
+
+    async def terminate(self) -> None:
+        await self.kill_tmux_session()
+        await self.close()
+
+    async def kill_tmux_session(self) -> None:
+        session_name = self._get_tmux_session_name()
+        try:
+            await self.sandbox_service.execute_command(
+                self.sandbox_id, f"tmux kill-session -t {shlex.quote(session_name)}"
+            )
+        except (OSError, RuntimeError, SandboxException):
+            pass
+
+    def _get_tmux_session_name(self) -> str:
+        if self.tmux_session_name is None:
+            safe_terminal = self.terminal_id.replace("-", "_")
+            safe_sandbox = self.sandbox_id.replace("-", "_")
+            self.tmux_session_name = f"claudex_{safe_sandbox}_{safe_terminal}"
+        return self.tmux_session_name
+
+    async def _input_worker(self, session_id: str) -> None:
+        if self.input_queue is None:
+            return
+
+        while True:
+            buffer = await self._drain(self.input_queue)
+            payload = b"".join(buffer)
+            await self.sandbox_service.send_pty_input(
+                self.sandbox_id, session_id, payload
+            )
+
+    async def _enqueue_output(self, data: bytes) -> None:
+        if not self.output_queue:
+            return
+        self._force_enqueue(self.output_queue, data.decode("utf-8", errors="replace"))
+
+    async def _forward_output(self, websocket: WebSocket) -> None:
+        if not self.output_queue:
+            return
+        try:
+            while True:
+                buffer = await self._drain(self.output_queue)
+                payload = json.dumps({"type": "stdout", "data": "".join(buffer)})
+                await websocket.send_text(payload)
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError) as e:
+            logger.error(
+                "Error forwarding PTY output for sandbox %s: %s",
+                self.sandbox_id,
+                e,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _force_enqueue(queue: "asyncio.Queue[_T]", item: "_T") -> bool:
+        try:
+            queue.put_nowait(item)
+            return True
+        except QueueFull:
+            try:
+                queue.get_nowait()
+            except QueueEmpty:
+                pass
+            try:
+                queue.put_nowait(item)
+                return True
+            except QueueFull:
+                return False
+
+    @staticmethod
+    async def _drain(queue: "asyncio.Queue[_T]") -> "list[_T]":
+        first = await queue.get()
+        buffer = [first]
+        while True:
+            try:
+                buffer.append(queue.get_nowait())
+            except QueueEmpty:
+                break
+        return buffer
+
+    @staticmethod
+    def _handle_input_task_done(task: asyncio.Task[None]) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except (OSError, RuntimeError) as exc:
+            logger.error("Error in input task: %s", exc)
+
+
+class TerminalSessionRegistry:
+    def __init__(self) -> None:
+        self._sessions: dict[str, TerminalSessionRecord] = {}
+        self._lock = asyncio.Lock()
+
+    @staticmethod
+    def build_session_key(user_id: str, sandbox_id: str, terminal_id: str) -> str:
+        return f"{user_id}:{sandbox_id}:{terminal_id}"
+
+    async def get_or_create(
+        self,
+        *,
+        user_id: str,
+        sandbox_id: str,
+        terminal_id: str,
+        provider_type: SandboxProviderType,
+        workspace_path: str | None,
+    ) -> TerminalSessionRecord:
+        key = self.build_session_key(user_id, sandbox_id, terminal_id)
+        async with self._lock:
+            existing = self._sessions.get(key)
+            if existing:
+                return existing
+
+            provider = SandboxProviderFactory.create(provider_type)
+            if provider_type == SandboxProviderType.HOST and workspace_path:
+                host_provider = cast(LocalHostProvider, provider)
+                host_provider.bind_workspace(
+                    sandbox_id=sandbox_id,
+                    workspace_path=workspace_path,
+                )
+            service = SandboxService(provider)
+
+            record = TerminalSessionRecord(
+                user_id=user_id,
+                sandbox_id=sandbox_id,
+                terminal_id=terminal_id,
+                sandbox_service=service,
+                on_close=partial(self._remove, key),
+            )
+            self._sessions[key] = record
+            return record
+
+    def _remove(self, key: str) -> None:
+        self._sessions.pop(key, None)
+
+    async def terminate_all(self) -> None:
+        async with self._lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+
+        for session in sessions:
+            try:
+                await session.terminate()
+            except (OSError, RuntimeError, SandboxException) as exc:
+                logger.error("Failed to terminate terminal session: %s", exc)
+
+
+terminal_session_registry = TerminalSessionRegistry()

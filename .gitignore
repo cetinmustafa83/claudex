@@ -1,0 +1,92 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+storage/
+
+# Editor directories and files
+.git/
+.github/
+.docker/
+.ruff_cache/
+.pytest_cache/
+.husky/
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Static files
+static
+
+# Python binary files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Database files
+*.db
+
+# Env
+*.env
+!.env
+
+.agents/
+.claude/
+**/.claude/settings.local.json
+
+# Celery beat artifacts
+frontend/core
+
+# Tauri / Desktop
+frontend/src-tauri/target/
+frontend/src-tauri/bin/
+frontend/src-tauri/gen/schemas/
+frontend/src-tauri/icons/android/
+frontend/src-tauri/icons/ios/
+frontend/backend-sidecar/
+backend/desktop/.venv-build/
+backend/desktop/.pyinstaller/
+backend/desktop/build/
+# Runtime scheduler state file
+backend/*beat-schedule*
+
+# Host environment artifacts
+.bashrc
+.claude.json
+.codex/
+.ide_connection_token
+.npm/
+.openvscode-server/
+.git-askpass.sh
+Library/

@@ -1,0 +1,113 @@
+import { memo } from 'react';
+import { AlertTriangle, Code, FileText, Save, Loader2, PanelLeft } from 'lucide-react';
+import type { FileStructure } from '@/types/file-system.types';
+import { Button } from '@/components/ui/primitives/Button';
+import { isPreviewableFile } from '@/utils/fileTypes';
+import { cn } from '@/utils/cn';
+
+export interface HeaderProps {
+  filePath?: string;
+  error: string | null;
+  selectedFile?: FileStructure | null;
+  showPreview?: boolean;
+  onTogglePreview?: (showPreview: boolean) => void;
+  hasUnsavedChanges?: boolean;
+  isSaving?: boolean;
+  onSave?: () => void;
+  onToggleFileTree?: () => void;
+}
+
+export const Header = memo(function Header({
+  filePath,
+  error,
+  selectedFile,
+  showPreview = false,
+  onTogglePreview,
+  hasUnsavedChanges = false,
+  isSaving = false,
+  onSave,
+  onToggleFileTree,
+}: HeaderProps) {
+  const isPreviewable = selectedFile ? isPreviewableFile(selectedFile) : false;
+
+  if (!filePath) return null;
+
+  return (
+    <div className="flex h-9 items-center justify-between border-b border-border/50 bg-surface-secondary px-3 dark:border-border-dark/50 dark:bg-surface-dark-secondary">
+      <div className="flex min-w-0 items-center gap-2">
+        {onToggleFileTree && (
+          <button
+            onClick={onToggleFileTree}
+            className={cn(
+              'shrink-0 rounded-md p-1',
+              'text-text-quaternary hover:text-text-secondary',
+              'dark:text-text-dark-quaternary dark:hover:text-text-dark-secondary',
+              'transition-colors duration-150',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-quaternary/30',
+            )}
+            aria-label="Toggle file tree"
+          >
+            <PanelLeft size={14} />
+          </button>
+        )}
+        <span className="truncate font-mono text-2xs text-text-tertiary dark:text-text-dark-tertiary">
+          {filePath}
+        </span>
+        {hasUnsavedChanges && (
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-text-quaternary dark:bg-text-dark-quaternary" />
+        )}
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        {error && (
+          <div className="flex items-center gap-1 text-error-500 dark:text-error-400">
+            <AlertTriangle className="h-3 w-3" />
+            <span className="text-2xs">{error}</span>
+          </div>
+        )}
+
+        {onSave && hasUnsavedChanges && (
+          <Button
+            onClick={onSave}
+            disabled={isSaving}
+            variant="unstyled"
+            className={cn(
+              'flex items-center gap-1 rounded-md px-2 py-0.5 text-2xs font-medium transition-colors duration-200',
+              isSaving
+                ? 'cursor-not-allowed text-text-quaternary dark:text-text-dark-quaternary'
+                : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary dark:text-text-dark-secondary dark:hover:bg-surface-dark-hover dark:hover:text-text-dark-primary',
+            )}
+          >
+            {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+            {isSaving ? 'Saving' : 'Save'}
+          </Button>
+        )}
+
+        {isPreviewable && (
+          <Button
+            onClick={() => (onTogglePreview ? onTogglePreview(!showPreview) : null)}
+            variant="unstyled"
+            className={cn(
+              'flex items-center gap-1 rounded-md px-2 py-0.5 text-2xs font-medium transition-colors duration-200',
+              showPreview
+                ? 'bg-surface-active text-text-primary dark:bg-surface-dark-hover dark:text-text-dark-primary'
+                : 'text-text-tertiary hover:bg-surface-hover hover:text-text-primary dark:text-text-dark-tertiary dark:hover:bg-surface-dark-hover dark:hover:text-text-dark-primary',
+            )}
+          >
+            {showPreview ? (
+              <>
+                <Code className="h-3 w-3" />
+                Code
+              </>
+            ) : (
+              <>
+                <FileText className="h-3 w-3" />
+                Preview
+              </>
+            )}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+});

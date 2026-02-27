@@ -1,0 +1,99 @@
+name: claudex-web
+
+services:
+  postgres:
+    image: postgres:13-alpine
+    container_name: claudex-postgres-web
+    restart: always
+    command: -c max_connections=600
+    env_file: .env
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: claudex-redis-web
+    restart: always
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  sandbox-setup:
+    image: docker:27-cli
+    container_name: claudex-sandbox-setup-web
+    restart: "no"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: sh -c "docker pull ${DOCKER_IMAGE}"
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: claudex-api-web
+    restart: unless-stopped
+    command: ["api"]
+    user: root
+    privileged: true
+    group_add:
+      - "0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      sandbox-setup:
+        condition: service_completed_successfully
+    ports:
+      - "${BACKEND_PORT}:8080"
+      - "${VNC_PORT}:5900"
+      - "${VNC_WS_PORT}:6080"
+      - "${OPENVSCODE_PORT}:8765"
+    volumes:
+      - ./backend:/app
+      - ./storage:/app/storage
+      - /app/__pycache__
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file: .env
+    networks:
+      - default
+      - sandbox
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: claudex-frontend-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${FRONTEND_PORT}:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    env_file: .env
+
+networks:
+  sandbox:
+    name: claudex-sandbox-net
+    external: true
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
