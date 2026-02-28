@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api';
 import { ensureResponse, serviceCall, withAuth } from '@/services/base/BaseService';
 import { ValidationError } from '@/services/base/ServiceError';
-import type { AuthResponse, User, UserProfile, UserProfileUpdate } from '@/types/user.types';
+import type { AuthResponse, User } from '@/types/user.types';
 import { authStorage } from '@/utils/storage';
 import {
   validateRequired,
@@ -152,20 +152,6 @@ async function resetPassword(data: ResetPasswordRequest): Promise<void> {
   });
 }
 
-async function getProfile(): Promise<UserProfile> {
-  return withAuth(async () => {
-    const response = await apiClient.get<UserProfile>('/auth/profile');
-    return ensureResponse(response, 'Invalid response from server');
-  });
-}
-
-async function updateProfile(data: UserProfileUpdate): Promise<UserProfile> {
-  return withAuth(async () => {
-    const response = await apiClient.patch<UserProfile>('/auth/profile', data);
-    return ensureResponse(response, 'Invalid response from server');
-  });
-}
-
 export const authService = {
   signup,
   login,
@@ -177,6 +163,4 @@ export const authService = {
   resendVerification,
   forgotPassword,
   resetPassword,
-  getProfile,
-  updateProfile,
 };

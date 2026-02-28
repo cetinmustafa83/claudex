@@ -1,17 +1,14 @@
 import { useState, useEffect } from 'react';
-import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/primitives/Button';
 import { Input } from '@/components/ui/primitives/Input';
 import { Label } from '@/components/ui/primitives/Label';
 import { Select } from '@/components/ui/primitives/Select';
 import { Switch } from '@/components/ui/primitives/Switch';
-import { Spinner } from '@/components/ui/primitives/Spinner';
 import { BaseModal } from '@/components/ui/shared/BaseModal';
 import { SecretInput } from '../inputs/SecretInput';
 import { OpenAIAuthButton } from '../inputs/OpenAIAuthButton';
 import { CopilotAuthButton } from '../inputs/CopilotAuthButton';
 import { ModelListEditor } from '../inputs/ModelListEditor';
-import { settingsService } from '@/services/settingsService';
 import type { CustomProvider, CustomProviderModel, ProviderType } from '@/types/user.types';
 import type { HelperTextCode, HelperTextLink } from '@/types/settings.types';
 
@@ -75,37 +72,11 @@ const DEFAULT_COPILOT_PROVIDER: Omit<CustomProvider, 'id' | 'auth_token'> = {
   ],
 };
 
-const DEFAULT_GLM_PROVIDER: Omit<CustomProvider, 'id' | 'auth_token'> = {
-  name: 'GLM',
-  provider_type: 'glm',
-  base_url: 'https://open.bigmodel.cn/api/anthropic',
-  enabled: true,
-  models: [
-    { model_id: 'glm-5', name: 'GLM 5', enabled: true },
-    { model_id: 'glm-4.7', name: 'GLM 4.7', enabled: true },
-    { model_id: 'glm-4.6v', name: 'GLM 4.6V', enabled: true },
-  ],
-};
-
-const DEFAULT_A4F_PROVIDER: Omit<CustomProvider, 'id' | 'auth_token'> = {
-  name: 'A4F',
-  provider_type: 'a4f',
-  base_url: 'https://api.a4f.co/v1',
-  enabled: true,
-  models: [
-    { model_id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', enabled: true },
-    { model_id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5', enabled: true },
-    { model_id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', enabled: true },
-  ],
-};
-
 const PROVIDER_TYPE_OPTIONS = [
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'openrouter', label: 'OpenRouter' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'copilot', label: 'GitHub Copilot' },
-  { value: 'glm', label: 'GLM' },
-  { value: 'a4f', label: 'A4F' },
   { value: 'custom', label: 'Custom' },
 ];
 
@@ -130,10 +101,6 @@ const createProviderFromType = (providerType: ProviderType): CustomProvider => {
       return { ...DEFAULT_OPENAI_PROVIDER, id, auth_token: '' };
     case 'copilot':
       return { ...DEFAULT_COPILOT_PROVIDER, id, auth_token: '' };
-    case 'glm':
-      return { ...DEFAULT_GLM_PROVIDER, id, auth_token: '' };
-    case 'a4f':
-      return { ...DEFAULT_A4F_PROVIDER, id, auth_token: '' };
     default:
       return createEmptyProvider();
   }
@@ -187,26 +154,6 @@ const getAuthTokenConfig = (
           href: 'https://github.com/features/copilot',
         },
       };
-    case 'glm':
-      return {
-        label: 'API Key',
-        placeholder: 'Enter your GLM API key',
-        helperText: {
-          prefix: 'Get your API key from',
-          anchorText: 'bigmodel.cn',
-          href: 'https://bigmodel.cn/user/api-keys',
-        },
-      };
-    case 'a4f':
-      return {
-        label: 'API Key',
-        placeholder: 'Enter your A4F API key',
-        helperText: {
-          prefix: 'Get your API key from',
-          anchorText: 'a4f.co',
-          href: 'https://a4f.co',
-        },
-      };
     case 'custom':
     default:
       return {
@@ -232,32 +179,6 @@ export const ProviderDialog: React.FC<ProviderDialogProps> = ({
   const [showToken, setShowToken] = useState(false);
   const [selectedProviderType, setSelectedProviderType] = useState<ProviderType>('anthropic');
   const [localError, setLocalError] = useState<string | null>(null);
-  const [isFetchingModels, setIsFetchingModels] = useState(false);
-
-  const handleFetchA4FModels = async () => {
-    if (!form.auth_token) {
-      setLocalError('Please enter your A4F API key first');
-      return;
-    }
-
-    setIsFetchingModels(true);
-    setLocalError(null);
-
-    try {
-      const response = await settingsService.fetchA4FModels(form.auth_token);
-      if (response.success && response.models.length > 0) {
-        setForm((prev) => ({ ...prev, models: response.models }));
-      } else if (response.error) {
-        setLocalError(response.error);
-      } else {
-        setLocalError('No models found');
-      }
-    } catch {
-      setLocalError('Failed to fetch models from A4F');
-    } finally {
-      setIsFetchingModels(false);
-    }
-  };
 
   useEffect(() => {
     if (isOpen) {
@@ -283,7 +204,7 @@ export const ProviderDialog: React.FC<ProviderDialogProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const builtInTypes = ['anthropic', 'openrouter', 'openai', 'copilot', 'glm', 'a4f'];
+    const builtInTypes = ['anthropic', 'openrouter', 'openai', 'copilot'];
     if (builtInTypes.includes(form.provider_type) && !form.auth_token) {
       setLocalError('Authentication is required for this provider type.');
       return;
@@ -316,10 +237,6 @@ export const ProviderDialog: React.FC<ProviderDialogProps> = ({
         return 'Add OpenAI Provider';
       case 'copilot':
         return 'Add GitHub Copilot Provider';
-      case 'glm':
-        return 'Add GLM Provider';
-      case 'a4f':
-        return 'Add A4F Provider';
       default:
         return 'Add Custom Provider';
     }
@@ -439,25 +356,6 @@ export const ProviderDialog: React.FC<ProviderDialogProps> = ({
                 helperText={authConfig.helperText}
                 containerClassName="w-full"
               />
-            </div>
-          )}
-
-          {form.provider_type === 'a4f' && (
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                onClick={handleFetchA4FModels}
-                variant="outline"
-                size="sm"
-                disabled={!form.auth_token || isFetchingModels}
-                className="gap-1.5"
-              >
-                {isFetchingModels ? <Spinner size="sm" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                Fetch Models from API
-              </Button>
-              <span className="text-2xs text-text-quaternary dark:text-text-dark-quaternary">
-                Automatically fetch available models
-              </span>
             </div>
           )}
 

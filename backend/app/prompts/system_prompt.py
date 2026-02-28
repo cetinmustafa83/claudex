@@ -10,32 +10,6 @@ if TYPE_CHECKING:
 
 class SystemPromptBuilder:
     @staticmethod
-    def supabase_section(supabase_configured: bool) -> str:
-        if not supabase_configured:
-            return ""
-        return """
-<supabase_integration>
-- Supabase MCP tools are available for database, auth, and storage operations
-- Use mcp__supabase__* tools to interact with the connected Supabase instance
-- Available operations: query tables, insert/update data, manage auth users, storage buckets
-- The user has already configured their Supabase connection - use it directly when relevant
-</supabase_integration>
-"""
-
-    @staticmethod
-    def appwrite_section(appwrite_configured: bool) -> str:
-        if not appwrite_configured:
-            return ""
-        return """
-<appwrite_integration>
-- Appwrite MCP tools are available for backend operations
-- Use mcp__appwrite__* tools to interact with the connected Appwrite instance
-- Available operations: database, auth, storage, functions
-- The user has already configured their Appwrite connection - use it directly when relevant
-</appwrite_integration>
-"""
-
-    @staticmethod
     def github_section(github_token_configured: bool) -> str:
         if not github_token_configured:
             return ""
@@ -112,8 +86,6 @@ Guidelines for suggestions:
         env_vars_formatted: str | None = None,
         sandbox_provider: str = "docker",
         custom_prompt_content: str | None = None,
-        supabase_configured: bool = False,
-        appwrite_configured: bool = False,
     ) -> str:
         current_date = datetime.utcnow().strftime("%Y-%m-%d")
         runtime_section = SystemPromptBuilder.runtime_context_section(
@@ -122,8 +94,6 @@ Guidelines for suggestions:
         github_section = SystemPromptBuilder.github_section(github_token_configured)
         env_section = SystemPromptBuilder.env_vars_section(env_vars_formatted)
         suggestions_section = SystemPromptBuilder.prompt_suggestions_section()
-        supabase_section = SystemPromptBuilder.supabase_section(supabase_configured)
-        appwrite_section = SystemPromptBuilder.appwrite_section(appwrite_configured)
 
         custom_section = f"\n{custom_prompt_content}\n" if custom_prompt_content else ""
 
@@ -134,10 +104,6 @@ Guidelines for suggestions:
 {github_section}
 
 {env_section}
-
-{supabase_section}
-
-{appwrite_section}
 
 {suggestions_section}
 """
@@ -156,15 +122,6 @@ def build_system_prompt_for_chat(
         )
 
     sandbox_provider = user_settings.sandbox_provider
-
-    supabase_configured = bool(
-        user_settings.supabase_url and user_settings.supabase_anon_key
-    )
-    appwrite_configured = bool(
-        user_settings.appwrite_endpoint
-        and user_settings.appwrite_project_id
-        and user_settings.appwrite_api_key
-    )
 
     custom_prompt_content = None
     if selected_prompt_name and user_settings.custom_prompts:
@@ -185,6 +142,4 @@ def build_system_prompt_for_chat(
         env_vars_formatted,
         sandbox_provider,
         custom_prompt_content=custom_prompt_content,
-        supabase_configured=supabase_configured,
-        appwrite_configured=appwrite_configured,
     )

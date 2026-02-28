@@ -3,60 +3,7 @@ export interface User {
   email: string;
   username: string;
   is_verified: boolean;
-  is_superuser: boolean;
   email_verification_required: boolean;
-}
-
-export interface UserProfile {
-  id: string;
-  email: string;
-  username: string;
-  first_name: string | null;
-  last_name: string | null;
-  display_name: string | null;
-  company_name: string | null;
-  job_title: string | null;
-  phone: string | null;
-  avatar_url: string | null;
-  bio: string | null;
-  locale: string;
-  is_verified: boolean;
-  is_superuser: boolean;
-}
-
-export interface UserProfileUpdate {
-  first_name?: string | null;
-  last_name?: string | null;
-  display_name?: string | null;
-  company_name?: string | null;
-  job_title?: string | null;
-  phone?: string | null;
-  avatar_url?: string | null;
-  bio?: string | null;
-  locale?: string;
-}
-
-export interface AdminUser {
-  id: string;
-  email: string;
-  username: string;
-  is_active: boolean;
-  is_verified: boolean;
-  is_superuser: boolean;
-}
-
-export interface AdminUserCreate {
-  email: string;
-  username: string;
-  password: string;
-  is_superuser?: boolean;
-}
-
-export interface AdminUserUpdate {
-  email?: string;
-  username?: string;
-  is_active?: boolean;
-  is_superuser?: boolean;
 }
 
 export interface AuthResponse {
@@ -122,7 +69,7 @@ export interface CustomPrompt {
 
 export type SandboxProviderType = 'docker' | 'host';
 
-export type ProviderType = 'anthropic' | 'openrouter' | 'openai' | 'copilot' | 'glm' | 'a4f' | 'custom';
+export type ProviderType = 'anthropic' | 'openrouter' | 'openai' | 'copilot' | 'custom';
 
 export interface CustomProviderModel {
   model_id: string;
@@ -157,7 +104,6 @@ export interface UserSettings {
   notifications_enabled?: boolean;
   auto_compact_disabled?: boolean;
   attribution_disabled?: boolean;
-  enterprise_mode?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -165,26 +111,3 @@ export interface UserSettings {
 export type UserSettingsUpdate = Partial<
   Omit<UserSettings, 'id' | 'user_id' | 'created_at' | 'updated_at'>
 >;
-
-export interface AuthSettings {
-  pin_enabled: boolean;
-  passwordless_enabled: boolean;
-}
-
-export interface PINSetupRequest {
-  pin: string;
-}
-
-export interface PINLoginRequest {
-  email: string;
-  pin: string;
-}
-
-export interface PasswordlessLoginRequest {
-  email: string;
-}
-
-export interface PasswordlessVerifyRequest {
-  email: string;
-  code: string;
-}

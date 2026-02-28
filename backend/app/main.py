@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import FastAPI, Response, status
 from fastapi.staticfiles import StaticFiles
-from granian.utils.proxies import wrap_asgi_with_proxy_headers
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from sqlalchemy import text
 
 from app.api.docs import custom_openapi
@@ -18,20 +18,12 @@ from app.api.endpoints import (
     auth,
     chat,
     commands,
-    customer,
-    finance,
     integrations,
     marketplace,
     mcps,
-    organization,
     permissions,
-    projects,
-    rbac,
-    reports,
     sandbox,
     scheduler,
-    system,
-    tickets,
 )
 from app.api.endpoints import settings as settings_router
 from app.api.endpoints import skills, websocket
@@ -190,46 +182,6 @@ def create_application() -> FastAPI:
         prefix=f"{settings.API_V1_STR}/integrations",
         tags=["Integrations"],
     )
-    application.include_router(
-        system.router,
-        prefix=f"{settings.API_V1_STR}/system",
-        tags=["System"],
-    )
-    application.include_router(
-        rbac.router,
-        prefix=f"{settings.API_V1_STR}/rbac",
-        tags=["RBAC"],
-    )
-    application.include_router(
-        organization.router,
-        prefix=f"{settings.API_V1_STR}/organization",
-        tags=["Organization"],
-    )
-    application.include_router(
-        tickets.router,
-        prefix=f"{settings.API_V1_STR}/tickets",
-        tags=["Tickets"],
-    )
-    application.include_router(
-        projects.router,
-        prefix=f"{settings.API_V1_STR}/projects",
-        tags=["Projects"],
-    )
-    application.include_router(
-        finance.router,
-        prefix=f"{settings.API_V1_STR}/finance",
-        tags=["Finance"],
-    )
-    application.include_router(
-        customer.router,
-        prefix=f"{settings.API_V1_STR}/customer",
-        tags=["Customer"],
-    )
-    application.include_router(
-        reports.router,
-        prefix=f"{settings.API_V1_STR}/reports",
-        tags=["Reports"],
-    )
     application.openapi = partial(custom_openapi, application)
 
     application.add_api_route("/health", health_check, methods=["GET"])
@@ -292,4 +244,4 @@ if not settings.DESKTOP_MODE and _instrumentator_available:
     Instrumentator().instrument(app).expose(app)
 
 if not settings.DISABLE_PROXY_HEADERS:
-    app = wrap_asgi_with_proxy_headers(app, trusted_hosts=settings.TRUSTED_PROXY_HOSTS)
+    app = ProxyHeadersMiddleware(app, trusted_hosts=settings.TRUSTED_PROXY_HOSTS)

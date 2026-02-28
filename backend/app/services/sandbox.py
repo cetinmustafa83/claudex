@@ -733,33 +733,6 @@ class SandboxService:
                 return provider["auth_token"]
         return None
 
-    @staticmethod
-    def _get_glm_api_key(
-        custom_providers: list[CustomProviderDict] | None,
-    ) -> str | None:
-        if not custom_providers:
-            return None
-        for provider in custom_providers:
-            if (
-                provider.get("provider_type") == ProviderType.GLM.value
-                and provider.get("enabled", True)
-                and provider.get("auth_token")
-            ):
-                return provider["auth_token"]
-        return None
-
-    @staticmethod
-    def _has_glm_provider(
-        custom_providers: list[CustomProviderDict] | None,
-    ) -> bool:
-        if not custom_providers:
-            return False
-        return any(
-            provider.get("provider_type") == ProviderType.GLM.value
-            and provider.get("enabled", True)
-            for provider in custom_providers
-        )
-
     async def create_checkpoint(self, sandbox_id: str, message_id: str) -> str | None:
         self._validate_message_id(message_id)
         return await self.provider.create_checkpoint(sandbox_id, message_id)

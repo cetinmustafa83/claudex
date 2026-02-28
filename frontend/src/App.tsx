@@ -18,7 +18,6 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { check } from '@tauri-apps/plugin-updater';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { authStorage } from '@/utils/storage';
-import { UpdateSplashScreen } from '@/components/splash/UpdateSplashScreen';
 
 const LandingPage = lazy(() =>
   import('@/pages/LandingPage').then((m) => ({ default: m.LandingPage })),
@@ -182,9 +181,8 @@ export default function App() {
   const [desktopReady, setDesktopReady] = useState(!isTauri());
   const [desktopError, setDesktopError] = useState<string | null>(null);
   const [authHydrated, setAuthHydrated] = useState(false);
-  const [migrationComplete, setMigrationComplete] = useState(false);
 
-  useGlobalStream({ enabled: authHydrated && desktopReady && migrationComplete });
+  useGlobalStream({ enabled: authHydrated && desktopReady });
 
   useEffect(() => {
     let cancelled = false;
@@ -267,11 +265,6 @@ export default function App() {
 
   if (!desktopReady || !authHydrated) {
     return <LoadingScreen />;
-  }
-
-  // Show update splash screen during migration checks
-  if (!migrationComplete) {
-    return <UpdateSplashScreen onComplete={() => setMigrationComplete(true)} />;
   }
 
   return (

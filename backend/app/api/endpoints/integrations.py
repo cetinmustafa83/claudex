@@ -17,8 +17,6 @@ from app.core.deps import get_db, get_user_service
 from app.core.security import get_current_user
 from app.models.db_models.user import User, UserSettings
 from app.models.schemas.integrations import (
-    AppwriteConfigRequest,
-    AppwriteStatusResponse,
     DeviceCodeResponse,
     GmailStatusResponse,
     OAuthClientResponse,
@@ -27,15 +25,11 @@ from app.models.schemas.integrations import (
     OpenAIPollTokenRequest,
     PollTokenRequest,
     PollTokenResponse,
-    SupabaseConfigRequest,
-    SupabaseStatusResponse,
 )
-from app.services.appwrite_service import AppwriteService
 from app.services.copilot_oauth import CopilotOAuthService
 from app.services.exceptions import UserException
 from app.services.gmail_oauth import GmailOAuthService
 from app.services.openai_oauth import VERIFICATION_URI, OpenAIOAuthService
-from app.services.supabase_service import SupabaseService
 from app.services.user import UserService
 
 router = APIRouter()
@@ -379,193 +373,3 @@ async def poll_openai_token(
         status_code=400,
         detail=f"OpenAI authorization failed (status {status_code})",
     )
-
-
-# === Supabase Endpoints ===
-
-
-@router.post("/supabase/config", response_model=OAuthClientResponse)
-async def configure_supabase(
-    request: SupabaseConfigRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    user_service: UserService = Depends(get_user_service),
-) -> OAuthClientResponse:
-    is_valid, error_msg, _ = await SupabaseService.validate_connection(
-        request.url, request.anon_key
-    )
-    if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_msg or "Failed to connect to Supabase",
-        )
-
-    user_settings = await load_user_settings_or_404(user_service, current_user.id, db)
-    user_settings.supabase_url = SupabaseService.normalize_url(request.url)
-    user_settings.supabase_anon_key = request.anon_key
-    user_settings.supabase_service_role_key = request.service_role_key
-    user_settings.supabase_connected_at = datetime.now(timezone.utc)
-
-    await user_service.save_settings(user_settings, db, current_user.id)
-
-    return OAuthClientResponse(success=True, message="Supabase connected successfully")
-
-
-@router.get("/supabase/status", response_model=SupabaseStatusResponse)
-async def get_supabase_status(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    user_service: UserService = Depends(get_user_service),
-) -> SupabaseStatusResponse:
-    user_settings = await load_user_settings_or_404(user_service, current_user.id, db)
-
-    return SupabaseStatusResponse(
-        connected=user_settings.supabase_url is not None
-        and user_settings.supabase_anon_key is not None,
-        url=user_settings.supabase_url,
-        connected_at=user_settings.supabase_connected_at,
-    )
-
-
-@router.delete("/supabase/config", response_model=OAuthClientResponse)
-async def disconnect_supabase(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    user_service: UserService = Depends(get_user_service),
-) -> OAuthClientResponse:
-    user_settings = await load_user_settings_or_404(user_service, current_user.id, db)
-
-    user_settings.supabase_url = None
-    user_settings.supabase_anon_key = None
-    user_settings.supabase_service_role_key = None
-    user_settings.supabase_connected_at = None
-
-    await user_service.save_settings(user_settings, db, current_user.id)
-
-    return OAuthClientResponse(success=True, message="Supabase disconnected")
-
-
-@router.post("/supabase/validate", response_model=OAuthClientResponse)
-async def validate_supabase_connection(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    user_service: UserService = Depends(get_user_service),
-) -> OAuthClientResponse:
-    user_settings = await load_user_settings_or_404(user_service, current_user.id, db)
-
-    if not user_settings.supabase_url or not user_settings.supabase_anon_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Supabase is not configured",
-        )
-
-    is_valid, error_msg, _ = await SupabaseService.validate_connection(
-        user_settings.supabase_url, user_settings.supabase_anon_key
-    )
-    if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_msg or "Connection validation failed",
-        )
-
-    return OAuthClientResponse(success=True, message="Connection is valid")
-
-
-# === Appwrite Endpoints ===
-
-
-@router.post("/appwrite/config", response_model=OAuthClientResponse)
-async def configure_appwrite(
-    request: AppwriteConfigRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    user_service: UserService = Depends(get_user_service),
-) -> OAuthClientResponse:
-    is_valid, error_msg, _ = await AppwriteService.validate_connection(
-        request.endpoint, request.project_id, request.api_key
-    )
-    if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_msg or "Failed to connect to Appwrite",
-        )
-
-    user_settings = await load_user_settings_or_404(user_service, current_user.id, db)
-    user_settings.appwrite_endpoint = AppwriteService.normalize_endpoint(
-        request.endpoint
-    )
-    user_settings.appwrite_project_id = request.project_id
-    user_settings.appwrite_api_key = request.api_key
-    user_settings.appwrite_connected_at = datetime.now(timezone.utc)
-
-    await user_service.save_settings(user_settings, db, current_user.id)
-
-    return OAuthClientResponse(success=True, message="Appwrite connected successfully")
-
-
-@router.get("/appwrite/status", response_model=AppwriteStatusResponse)
-async def get_appwrite_status(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    user_service: UserService = Depends(get_user_service),
-) -> AppwriteStatusResponse:
-    user_settings = await load_user_settings_or_404(user_service, current_user.id, db)
-
-    return AppwriteStatusResponse(
-        connected=user_settings.appwrite_endpoint is not None
-        and user_settings.appwrite_project_id is not None
-        and user_settings.appwrite_api_key is not None,
-        endpoint=user_settings.appwrite_endpoint,
-        project_id=user_settings.appwrite_project_id,
-        connected_at=user_settings.appwrite_connected_at,
-    )
-
-
-@router.delete("/appwrite/config", response_model=OAuthClientResponse)
-async def disconnect_appwrite(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    user_service: UserService = Depends(get_user_service),
-) -> OAuthClientResponse:
-    user_settings = await load_user_settings_or_404(user_service, current_user.id, db)
-
-    user_settings.appwrite_endpoint = None
-    user_settings.appwrite_project_id = None
-    user_settings.appwrite_api_key = None
-    user_settings.appwrite_connected_at = None
-
-    await user_service.save_settings(user_settings, db, current_user.id)
-
-    return OAuthClientResponse(success=True, message="Appwrite disconnected")
-
-
-@router.post("/appwrite/validate", response_model=OAuthClientResponse)
-async def validate_appwrite_connection(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    user_service: UserService = Depends(get_user_service),
-) -> OAuthClientResponse:
-    user_settings = await load_user_settings_or_404(user_service, current_user.id, db)
-
-    if (
-        not user_settings.appwrite_endpoint
-        or not user_settings.appwrite_project_id
-        or not user_settings.appwrite_api_key
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Appwrite is not configured",
-        )
-
-    is_valid, error_msg, _ = await AppwriteService.validate_connection(
-        user_settings.appwrite_endpoint,
-        user_settings.appwrite_project_id,
-        user_settings.appwrite_api_key,
-    )
-    if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_msg or "Connection validation failed",
-        )
-
-    return OAuthClientResponse(success=True, message="Connection is valid")

@@ -6,7 +6,6 @@ from collections.abc import Callable
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -121,34 +120,6 @@ async def _http_exception_handler(
     )
 
 
-async def _validation_exception_handler(
-    request: Request, exc: RequestValidationError
-) -> JSONResponse:
-    request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())
-
-    errors = exc.errors()
-    logger.warning(
-        "validation_error",
-        extra={
-            "request_id": request_id,
-            "path": request.url.path,
-            "method": request.method,
-            "errors": errors,
-        },
-    )
-
-    return JSONResponse(
-        status_code=422,
-        content={
-            "detail": "Validation error",
-            "error_code": "VALIDATION_ERROR",
-            "message": "Validation error",
-            "details": {"errors": errors},
-            "request_id": request_id,
-        },
-    )
-
-
 async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())
 
@@ -202,5 +173,4 @@ def setup_middleware(app: FastAPI) -> None:
 
     app.add_exception_handler(ServiceException, _service_exception_handler)
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
-    app.add_exception_handler(RequestValidationError, _validation_exception_handler)
     app.add_exception_handler(Exception, _global_exception_handler)

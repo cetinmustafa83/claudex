@@ -57,103 +57,10 @@ async function disconnectGmail(): Promise<OAuthClientResponse> {
   });
 }
 
-// Supabase types and functions
-export interface SupabaseStatus {
-  connected: boolean;
-  url: string | null;
-  project_name: string | null;
-  connected_at: string | null;
-}
-
-export interface SupabaseConfig {
-  url: string;
-  anon_key: string;
-  service_role_key?: string;
-}
-
-async function configureSupabase(config: SupabaseConfig): Promise<OAuthClientResponse> {
-  return withAuth(async () => {
-    const response = await apiClient.post<OAuthClientResponse>('/integrations/supabase/config', config);
-    return ensureResponse(response, 'Failed to configure Supabase');
-  });
-}
-
-async function getSupabaseStatus(): Promise<SupabaseStatus> {
-  return withAuth(async () => {
-    const response = await apiClient.get<SupabaseStatus>('/integrations/supabase/status');
-    return ensureResponse(response, 'Failed to get Supabase status');
-  });
-}
-
-async function disconnectSupabase(): Promise<OAuthClientResponse> {
-  return withAuth(async () => {
-    const response = await apiClient.delete<OAuthClientResponse>('/integrations/supabase/config');
-    return ensureResponse(response, 'Failed to disconnect Supabase');
-  });
-}
-
-async function validateSupabaseConnection(): Promise<OAuthClientResponse> {
-  return withAuth(async () => {
-    const response = await apiClient.post<OAuthClientResponse>('/integrations/supabase/validate');
-    return ensureResponse(response, 'Failed to validate Supabase connection');
-  });
-}
-
-// Appwrite types and functions
-export interface AppwriteStatus {
-  connected: boolean;
-  endpoint: string | null;
-  project_id: string | null;
-  project_name: string | null;
-  connected_at: string | null;
-}
-
-export interface AppwriteConfig {
-  endpoint: string;
-  project_id: string;
-  api_key: string;
-}
-
-async function configureAppwrite(config: AppwriteConfig): Promise<OAuthClientResponse> {
-  return withAuth(async () => {
-    const response = await apiClient.post<OAuthClientResponse>('/integrations/appwrite/config', config);
-    return ensureResponse(response, 'Failed to configure Appwrite');
-  });
-}
-
-async function getAppwriteStatus(): Promise<AppwriteStatus> {
-  return withAuth(async () => {
-    const response = await apiClient.get<AppwriteStatus>('/integrations/appwrite/status');
-    return ensureResponse(response, 'Failed to get Appwrite status');
-  });
-}
-
-async function disconnectAppwrite(): Promise<OAuthClientResponse> {
-  return withAuth(async () => {
-    const response = await apiClient.delete<OAuthClientResponse>('/integrations/appwrite/config');
-    return ensureResponse(response, 'Failed to disconnect Appwrite');
-  });
-}
-
-async function validateAppwriteConnection(): Promise<OAuthClientResponse> {
-  return withAuth(async () => {
-    const response = await apiClient.post<OAuthClientResponse>('/integrations/appwrite/validate');
-    return ensureResponse(response, 'Failed to validate Appwrite connection');
-  });
-}
-
 export const integrationsService = {
   uploadGmailOAuthClient,
   deleteGmailOAuthClient,
   getGmailOAuthUrl,
   getGmailStatus,
   disconnectGmail,
-  configureSupabase,
-  getSupabaseStatus,
-  disconnectSupabase,
-  validateSupabaseConnection,
-  configureAppwrite,
-  getAppwriteStatus,
-  disconnectAppwrite,
-  validateAppwriteConnection,
 };

@@ -46,14 +46,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
         try:
             session = self.user_db.session
-
-            # Check if this is the first user - make them admin
-            user_count = await session.execute(select(User))
-            total_users = len(user_count.scalars().all())
-            if total_users == 1:
-                user.is_superuser = True
-                logger.info("First user %s set as admin", user.id)
-
             existing_settings = await session.execute(
                 select(UserSettings).filter(UserSettings.user_id == user.id)
             )
