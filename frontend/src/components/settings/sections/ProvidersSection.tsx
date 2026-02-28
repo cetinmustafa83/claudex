@@ -1,5 +1,6 @@
 import { useState, useCallback, Suspense, lazy } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useCurrentUserQuery } from '@/hooks/queries/useAuthQueries';
 import { useSettingsContext } from '@/hooks/useSettingsContext';
 import { queryKeys } from '@/hooks/queries/queryKeys';
 import type { CustomProvider } from '@/types/user.types';
@@ -16,6 +17,8 @@ const ProviderDialog = lazy(() =>
 );
 
 export function ProvidersSection() {
+  const { data: currentUser } = useCurrentUserQuery();
+  const isSuperuser = currentUser?.is_superuser ?? false;
   const { localSettings, persistSettings } = useSettingsContext();
   const queryClient = useQueryClient();
 
@@ -100,8 +103,9 @@ export function ProvidersSection() {
         onEditProvider={handleEditProvider}
         onDeleteProvider={handleDeleteProvider}
         onToggleProvider={handleToggleProvider}
+        readOnly={!isSuperuser}
       />
-      {isProviderDialogOpen && (
+      {isSuperuser && isProviderDialogOpen && (
         <Suspense fallback={null}>
           <ProviderDialog
             isOpen={isProviderDialogOpen}

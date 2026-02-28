@@ -14,6 +14,12 @@ import {
   ScrollText,
   CalendarClock,
   ChevronLeft,
+  User,
+  Users,
+  Database,
+  Shield,
+  FolderKanban,
+  Ticket,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/utils/cn';
@@ -21,7 +27,9 @@ import { useNavigate } from 'react-router-dom';
 import type { UserSettings, UserSettingsUpdate, SandboxProviderType } from '@/types/user.types';
 import type { ApiFieldKey } from '@/types/settings.types';
 import { useDeleteAllChatsMutation } from '@/hooks/queries/useChatQueries';
+import { useCurrentUserQuery } from '@/hooks/queries/useAuthQueries';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/hooks/queries/useSettingsQueries';
+import { useEnterpriseMode } from '@/hooks/queries/useEnterpriseMode';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Button } from '@/components/ui/primitives/Button';
 import { Spinner } from '@/components/ui/primitives/Spinner';
@@ -39,6 +47,12 @@ import { CommandsSection } from '@/components/settings/sections/CommandsSection'
 import { PromptsSection } from '@/components/settings/sections/PromptsSection';
 import { EnvVarsSection } from '@/components/settings/sections/EnvVarsSection';
 import { TasksSection } from '@/components/settings/sections/TasksSection';
+import { ProfilesSection } from '@/components/settings/sections/ProfilesSection';
+import { UsersSection } from '@/components/settings/sections/UsersSection';
+import { DatabaseConfigSection } from '@/components/settings/sections/DatabaseConfigSection';
+import { RolesSection } from '@/components/settings/sections/RolesSection';
+import { TicketsSection } from '@/components/settings/sections/TicketsSection';
+import { ProjectsSection } from '@/components/settings/sections/ProjectsSection';
 
 const IntegrationsSettingsTab = lazy(() =>
   import('@/components/settings/tabs/IntegrationsSettingsTab').then((m) => ({
@@ -58,6 +72,12 @@ const InstructionsSettingsTab = lazy(() =>
 
 type TabKey =
   | 'general'
+  | 'profiles'
+  | 'users'
+  | 'database'
+  | 'roles'
+  | 'projects'
+  | 'tickets'
   | 'providers'
   | 'integrations'
   | 'marketplace'
@@ -96,6 +116,12 @@ const createFallbackSettings = (): UserSettings => ({
 
 const TAB_FIELDS: Record<TabKey, (keyof UserSettings)[]> = {
   general: ['github_personal_access_token', 'timezone'],
+  profiles: [],
+  users: [],
+  database: [],
+  roles: [],
+  projects: [],
+  tickets: [],
   providers: ['custom_providers'],
   integrations: [],
   marketplace: [],
@@ -120,39 +146,67 @@ interface SettingsNavGroup {
   items: SettingsNavItem[];
 }
 
-const SETTINGS_NAV: SettingsNavGroup[] = [
-  {
-    label: 'Account',
-    items: [
-      { id: 'general', label: 'General', icon: Settings2 },
-      { id: 'providers', label: 'Providers', icon: Layers },
-      { id: 'integrations', label: 'Integrations', icon: Link2 },
-      { id: 'marketplace', label: 'Marketplace', icon: Store },
-    ],
-  },
-  {
-    label: 'Extensions',
-    items: [
-      { id: 'mcp', label: 'MCP Servers', icon: Plug },
-      { id: 'agents', label: 'Agents', icon: Bot },
-      { id: 'skills', label: 'Skills', icon: Zap },
-      { id: 'commands', label: 'Commands', icon: Terminal },
-    ],
-  },
-  {
-    label: 'Configuration',
-    items: [
-      { id: 'prompts', label: 'Prompts', icon: MessageSquare },
-      { id: 'env_vars', label: 'Env Variables', icon: Key },
-      { id: 'instructions', label: 'Instructions', icon: ScrollText },
-      { id: 'tasks', label: 'Tasks', icon: CalendarClock },
-    ],
-  },
-];
+const getSettingsNav = (isSuperuser: boolean, enterpriseMode: boolean): SettingsNavGroup[] => {
+  const accountItems: SettingsNavItem[] = [
+    { id: 'general', label: 'General', icon: Settings2 },
+    { id: 'profiles', label: 'Profiles', icon: User },
+  ];
 
-const TAB_LABELS: Record<TabKey, string> = Object.fromEntries(
-  SETTINGS_NAV.flatMap((g) => g.items).map((item) => [item.id, item.label]),
-) as Record<TabKey, string>;
+  if (isSuperuser) {
+    accountItems.push(
+      { id: 'users', label: 'Users', icon: Users },
+      { id: 'database', label: 'Database', icon: Database },
+    );
+    // Only show Roles when enterprise mode is ON
+    if (enterpriseMode) {
+      accountItems.push({ id: 'roles', label: 'Roles', icon: Shield });
+    }
+  }
+
+  // Enterprise-only sections
+  if (enterpriseMode) {
+    accountItems.push(
+      { id: 'projects', label: 'Projects', icon: FolderKanban },
+      { id: 'tickets', label: 'Tickets', icon: Ticket },
+    );
+  }
+
+  accountItems.push(
+    { id: 'providers', label: 'Providers', icon: Layers },
+    { id: 'integrations', label: 'Integrations', icon: Link2 },
+    { id: 'marketplace', label: 'Marketplace', icon: Store },
+  );
+
+  return [
+    {
+      label: 'Account',
+      items: accountItems,
+    },
+    {
+      label: 'Extensions',
+      items: [
+        { id: 'mcp', label: 'MCP Servers', icon: Plug },
+        { id: 'agents', label: 'Agents', icon: Bot },
+        { id: 'skills', label: 'Skills', icon: Zap },
+        { id: 'commands', label: 'Commands', icon: Terminal },
+      ],
+    },
+    {
+      label: 'Configuration',
+      items: [
+        { id: 'prompts', label: 'Prompts', icon: MessageSquare },
+        { id: 'env_vars', label: 'Env Variables', icon: Key },
+        { id: 'instructions', label: 'Instructions', icon: ScrollText },
+        { id: 'tasks', label: 'Tasks', icon: CalendarClock },
+      ],
+    },
+  ];
+};
+
+const getTabLabels = (nav: SettingsNavGroup[]): Record<TabKey, string> =>
+  Object.fromEntries(
+    nav.flatMap((g) => g.items).map((item) => [item.id, item.label]),
+  ) as Record<TabKey, string>;
 
 const tabLoadingFallback = (
   <div className="flex items-center justify-center py-12">
@@ -165,6 +219,15 @@ const SettingsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabKey>('general');
   const [isDeleteAllDialogOpen, setIsDeleteAllDialogOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  const { data: currentUser } = useCurrentUserQuery();
+  const isSuperuser = currentUser?.is_superuser ?? false;
+  const { data: enterpriseModeData } = useEnterpriseMode();
+  const enterpriseMode = enterpriseModeData?.enabled ?? false;
+  const settingsNav = useMemo(
+    () => getSettingsNav(isSuperuser, enterpriseMode),
+    [isSuperuser, enterpriseMode],
+  );
 
   const generalSecretFields = getGeneralSecretFields();
 
@@ -382,7 +445,7 @@ const SettingsPage: React.FC = () => {
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 py-2">
-          {SETTINGS_NAV.map((group) => (
+          {settingsNav.map((group) => (
             <div key={group.label} className="mb-1">
               <div className="px-2 pb-1 pt-3">
                 <span className="text-2xs font-medium uppercase tracking-widest text-text-quaternary dark:text-text-dark-quaternary">
@@ -445,7 +508,7 @@ const SettingsPage: React.FC = () => {
             aria-label="Toggle navigation menu"
             aria-expanded={mobileNavOpen}
           >
-            {TAB_LABELS[activeTab]}
+            {getTabLabels(settingsNav)[activeTab]}
             <svg
               className={cn(
                 'h-3 w-3 text-text-quaternary transition-transform duration-200 dark:text-text-dark-quaternary',
@@ -464,7 +527,7 @@ const SettingsPage: React.FC = () => {
         {/* Mobile dropdown nav */}
         {mobileNavOpen && (
           <div className="animate-in fade-in border-b border-border bg-surface px-3 py-2 duration-150 dark:border-border-dark dark:bg-surface-dark md:hidden">
-            {SETTINGS_NAV.map((group) => (
+            {settingsNav.map((group) => (
               <div key={group.label} className="mb-1">
                 <div className="px-2 pb-1 pt-2">
                   <span className="text-2xs font-medium uppercase tracking-widest text-text-quaternary dark:text-text-dark-quaternary">
@@ -574,6 +637,46 @@ const SettingsPage: React.FC = () => {
                         onSandboxProviderChange={handleSandboxProviderChange}
                         onTimezoneChange={handleTimezoneChange}
                       />
+                    </div>
+                  )}
+
+                  {activeTab === 'profiles' && (
+                    <div role="tabpanel" id="profiles-panel" aria-labelledby="profiles-tab">
+                      <Suspense fallback={tabLoadingFallback}>
+                        <ProfilesSection />
+                      </Suspense>
+                    </div>
+                  )}
+
+                  {activeTab === 'users' && isSuperuser && (
+                    <div role="tabpanel" id="users-panel" aria-labelledby="users-tab">
+                      <Suspense fallback={tabLoadingFallback}>
+                        <UsersSection />
+                      </Suspense>
+                    </div>
+                  )}
+
+                  {activeTab === 'database' && isSuperuser && (
+                    <div role="tabpanel" id="database-panel" aria-labelledby="database-tab">
+                      <DatabaseConfigSection />
+                    </div>
+                  )}
+
+                  {activeTab === 'roles' && isSuperuser && enterpriseMode && (
+                    <div role="tabpanel" id="roles-panel" aria-labelledby="roles-tab">
+                      <RolesSection />
+                    </div>
+                  )}
+
+                  {activeTab === 'projects' && enterpriseMode && (
+                    <div role="tabpanel" id="projects-panel" aria-labelledby="projects-tab">
+                      <ProjectsSection />
+                    </div>
+                  )}
+
+                  {activeTab === 'tickets' && enterpriseMode && (
+                    <div role="tabpanel" id="tickets-panel" aria-labelledby="tickets-tab">
+                      <TicketsSection />
                     </div>
                   )}
 

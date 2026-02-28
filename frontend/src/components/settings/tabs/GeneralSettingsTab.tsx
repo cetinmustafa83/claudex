@@ -7,6 +7,8 @@ import type { UserSettings, SandboxProviderType } from '@/types/user.types';
 import type { Theme } from '@/types/ui.types';
 import { useUIStore } from '@/store/uiStore';
 import { SecretInput } from '@/components/settings/inputs/SecretInput';
+import { useEnterpriseMode, useSetEnterpriseMode } from '@/hooks/queries/useEnterpriseMode';
+import { useCurrentUserQuery } from '@/hooks/queries/useAuthQueries';
 import { cn } from '@/utils/cn';
 
 interface GeneralSettingsTabProps {
@@ -48,6 +50,12 @@ const THEME_OPTIONS = [
   { value: 'system', label: 'System', disabled: false },
 ];
 
+const MODE_OPTIONS = [
+  { value: 'individual', label: 'Individual', disabled: false },
+  { value: 'client', label: 'Client', disabled: false },
+  { value: 'enterprise', label: 'Enterprise', disabled: false },
+];
+
 function ThemeControl() {
   const theme = useUIStore((state) => state.theme);
   return (
@@ -55,6 +63,34 @@ function ThemeControl() {
       value={theme}
       onChange={(val) => useUIStore.getState().setTheme(val as Theme)}
       options={THEME_OPTIONS}
+    />
+  );
+}
+
+function OperationModeControl() {
+  const { data: enterpriseModeData } = useEnterpriseMode();
+  const setEnterpriseMode = useSetEnterpriseMode();
+  const { data: currentUser } = useCurrentUserQuery();
+  const isSuperuser = currentUser?.is_superuser ?? false;
+
+  // Determine current mode based on enterprise_mode and remote_db_enabled
+  // For now, we'll use a simplified approach:
+  // - enterprise_mode=true -> enterprise
+  // - enterprise_mode=false -> individual
+  // In the future, client mode could be a separate setting
+  const currentMode = enterpriseModeData?.enabled ? 'enterprise' : 'individual';
+
+  const handleModeChange = (mode: string) => {
+    if (!isSuperuser) return;
+    setEnterpriseMode.mutate(mode === 'enterprise');
+  };
+
+  return (
+    <SegmentedControl
+      value={currentMode}
+      onChange={handleModeChange}
+      options={MODE_OPTIONS}
+      disabled={!isSuperuser}
     />
   );
 }
@@ -97,6 +133,20 @@ export const GeneralSettingsTab: React.FC<GeneralSettingsTabProps> = ({
             />
           </div>
         ))}
+      </div>
+    </SectionCard>
+
+    <SectionCard title="Operation Mode">
+      <div className="space-y-4">
+        <p className="mb-2 text-xs text-text-tertiary dark:text-text-dark-tertiary">
+          Select the operation mode for your installation.
+        </p>
+        <OperationModeControl />
+        <div className="mt-2 space-y-1 text-xs text-text-quaternary dark:text-text-dark-quaternary">
+          <p><span className="font-medium">Individual:</span> Personal use with local database</p>
+          <p><span className="font-medium">Client:</span> Connect to cloud database</p>
+          <p><span className="font-medium">Enterprise:</span> Full agency features (projects, tickets, roles)</p>
+        </div>
       </div>
     </SectionCard>
 

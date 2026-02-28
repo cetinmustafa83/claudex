@@ -12,6 +12,7 @@ interface ProvidersSettingsTabProps {
   onEditProvider: (provider: CustomProvider) => void;
   onDeleteProvider: (providerId: string) => void;
   onToggleProvider: (providerId: string, enabled: boolean) => void;
+  readOnly?: boolean;
 }
 
 const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
@@ -29,6 +30,7 @@ export const ProvidersSettingsTab: React.FC<ProvidersSettingsTabProps> = ({
   onEditProvider,
   onDeleteProvider,
   onToggleProvider,
+  readOnly = false,
 }) => {
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(() => new Set());
   const [providerPendingDelete, setProviderPendingDelete] = useState<CustomProvider | null>(null);
@@ -72,19 +74,28 @@ export const ProvidersSettingsTab: React.FC<ProvidersSettingsTabProps> = ({
             AI Providers
           </h2>
           <p className="mt-1 text-xs text-text-tertiary dark:text-text-dark-tertiary">
-            Configure AI providers for model access. Add providers like Anthropic, OpenAI,
-            OpenRouter, or custom endpoints.
+            {readOnly
+              ? 'No providers available. Contact an admin to add providers.'
+              : 'Configure AI providers for model access. Add providers like Anthropic, OpenAI, OpenRouter, or custom endpoints.'}
           </p>
         </div>
-        <div className="rounded-xl border border-dashed border-border py-10 text-center dark:border-border-dark">
-          <p className="mb-3 text-xs text-text-tertiary dark:text-text-dark-tertiary">
-            No providers configured
-          </p>
-          <Button onClick={onAddProvider} variant="outline" size="sm">
-            <Plus className="h-3.5 w-3.5" />
-            Add Provider
-          </Button>
-        </div>
+        {readOnly ? (
+          <div className="rounded-xl border border-dashed border-border py-10 text-center dark:border-border-dark">
+            <p className="text-xs text-text-tertiary dark:text-text-dark-tertiary">
+              No providers configured
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-border py-10 text-center dark:border-border-dark">
+            <p className="mb-3 text-xs text-text-tertiary dark:text-text-dark-tertiary">
+              No providers configured
+            </p>
+            <Button onClick={onAddProvider} variant="outline" size="sm">
+              <Plus className="h-3.5 w-3.5" />
+              Add Provider
+            </Button>
+          </div>
+        )}
       </div>
     );
   }
@@ -98,13 +109,17 @@ export const ProvidersSettingsTab: React.FC<ProvidersSettingsTabProps> = ({
               AI Providers
             </h2>
             <p className="mt-1 text-xs text-text-tertiary dark:text-text-dark-tertiary">
-              Configure AI providers for model access
+              {readOnly
+                ? 'Available AI providers (only admins can modify)'
+                : 'Configure AI providers for model access'}
             </p>
           </div>
-          <Button onClick={onAddProvider} variant="outline" size="sm">
-            <Plus className="h-3.5 w-3.5" />
-            Add Provider
-          </Button>
+          {!readOnly && (
+            <Button onClick={onAddProvider} variant="outline" size="sm">
+              <Plus className="h-3.5 w-3.5" />
+              Add Provider
+            </Button>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -156,26 +171,28 @@ export const ProvidersSettingsTab: React.FC<ProvidersSettingsTabProps> = ({
                       onCheckedChange={(checked) => onToggleProvider(provider.id, checked)}
                       size="sm"
                     />
-                    <div className="flex items-center gap-0.5">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => onEditProvider(provider)}
-                        aria-label="Edit provider"
-                        className="h-7 w-7 text-text-quaternary hover:text-text-secondary dark:text-text-dark-quaternary dark:hover:text-text-dark-secondary"
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setProviderPendingDelete(provider)}
-                        aria-label="Delete provider"
-                        className="h-7 w-7 text-text-quaternary hover:text-text-secondary dark:text-text-dark-quaternary dark:hover:text-text-dark-secondary"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
+                    {!readOnly && (
+                      <div className="flex items-center gap-0.5">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => onEditProvider(provider)}
+                          aria-label="Edit provider"
+                          className="h-7 w-7 text-text-quaternary hover:text-text-secondary dark:text-text-dark-quaternary dark:hover:text-text-dark-secondary"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setProviderPendingDelete(provider)}
+                          aria-label="Delete provider"
+                          className="h-7 w-7 text-text-quaternary hover:text-text-secondary dark:text-text-dark-quaternary dark:hover:text-text-dark-secondary"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
 

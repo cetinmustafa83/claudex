@@ -133,5 +133,12 @@ class EmailService:
 
         return await self._send_email(email, subject, body)
 
+    async def send_otp_email(self, email: EmailStr, otp_code: str) -> bool:
+        subject = "Your Claudex login code"
+        template = self.template_env.get_template("otp_code.html")
+        body = template.render(otp_code=otp_code)
+
+        return await self._send_email(email, subject, body)
+
 
 email_service = EmailService()

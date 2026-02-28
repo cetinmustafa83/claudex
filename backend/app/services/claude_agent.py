@@ -272,6 +272,14 @@ class ClaudeAgentService:
             env["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:3456"
             env["ANTHROPIC_AUTH_TOKEN"] = "placeholder"
             env["CLAUDE_CODE_SUBAGENT_MODEL"] = actual_model_id
+        elif provider_type == ProviderType.A4F.value:
+            if auth_token:
+                env["A4F_API_KEY"] = auth_token
+            base_url = provider.get("base_url") if provider else None
+            if base_url:
+                env["ANTHROPIC_BASE_URL"] = base_url
+            if auth_token:
+                env["ANTHROPIC_AUTH_TOKEN"] = auth_token
         elif provider_type == ProviderType.GLM.value:
             if auth_token:
                 env["GLM_API_KEY"] = auth_token
@@ -405,6 +413,35 @@ class ClaudeAgentService:
             servers["gmail"] = {
                 "command": "gmail-mcp",
                 "args": [],
+            }
+
+        # Supabase MCP - only if configured
+        if user_settings.supabase_url and user_settings.supabase_anon_key:
+            supabase_env = {
+                "SUPABASE_URL": user_settings.supabase_url,
+                "SUPABASE_KEY": user_settings.supabase_anon_key,
+            }
+            servers["supabase"] = {
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-supabase"],
+                "env": supabase_env,
+            }
+
+        # Appwrite MCP - only if configured
+        if (
+            user_settings.appwrite_endpoint
+            and user_settings.appwrite_project_id
+            and user_settings.appwrite_api_key
+        ):
+            appwrite_env = {
+                "APPWRITE_ENDPOINT": user_settings.appwrite_endpoint,
+                "APPWRITE_PROJECT_ID": user_settings.appwrite_project_id,
+                "APPWRITE_API_KEY": user_settings.appwrite_api_key,
+            }
+            servers["appwrite"] = {
+                "command": "npx",
+                "args": ["-y", "@triangulardev/appwrite-mcp"],
+                "env": appwrite_env,
             }
 
         return servers

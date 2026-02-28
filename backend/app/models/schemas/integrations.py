@@ -48,3 +48,34 @@ class PollTokenResponse(BaseModel):
     access_token: str | None = None
     refresh_token: str | None = None
     interval: int | None = None
+
+
+# Supabase schemas
+class SupabaseConfigRequest(BaseModel):
+    url: str = Field(..., description="Supabase project URL (cloud or self-hosted)")
+    anon_key: str = Field(..., description="Supabase anonymous/public key")
+    service_role_key: str | None = Field(None, description="Supabase service role key (optional)")
+
+
+class SupabaseStatusResponse(BaseModel):
+    connected: bool
+    url: str | None = None
+    project_name: str | None = None
+    connected_at: datetime | None = None
+
+
+# Appwrite schemas
+class AppwriteConfigRequest(BaseModel):
+    endpoint: str = Field(
+        ..., description="Appwrite endpoint URL (cloud.appwrite.io or self-hosted)"
+    )
+    project_id: str = Field(..., description="Appwrite project ID")
+    api_key: str = Field(..., description="Appwrite API key")
+
+
+class AppwriteStatusResponse(BaseModel):
+    connected: bool
+    endpoint: str | None = None
+    project_id: str | None = None
+    project_name: str | None = None
+    connected_at: datetime | None = None

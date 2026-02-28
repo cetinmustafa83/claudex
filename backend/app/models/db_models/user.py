@@ -55,6 +55,20 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     reset_token_expires: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # Profile fields
+    first_name: Mapped[str | None] = mapped_column(String(length=64), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(length=64), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(length=128), nullable=True)
+    company_name: Mapped[str | None] = mapped_column(String(length=128), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(length=128), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(length=32), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(length=512), nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    locale: Mapped[str] = mapped_column(
+        String(8), default="en", server_default="en", nullable=False
+    )
+
     chats = relationship("Chat", back_populates="user", cascade="all, delete-orphan")
     settings = relationship(
         "UserSettings",
@@ -127,4 +141,50 @@ class UserSettings(Base):
         DateTime(timezone=True), nullable=True
     )
     gmail_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    pin_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    hashed_pin: Mapped[str | None] = mapped_column(String(length=128), nullable=True)
+    passwordless_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    # Enterprise mode (system-wide setting, stored in first user's settings)
+    enterprise_mode: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    # Supabase integration
+    supabase_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    supabase_anon_key: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    supabase_service_role_key: Mapped[str | None] = mapped_column(
+        EncryptedString, nullable=True
+    )
+    supabase_connected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Appwrite integration
+    appwrite_endpoint: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    appwrite_project_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    appwrite_api_key: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    appwrite_connected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     user = relationship("User", back_populates="settings")
+
+
+class OTPCode(Base):
+    __tablename__ = "otp_codes"
+
+    id: Mapped[UUID] = mapped_column(
+        GUID(),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=PG_GEN_UUID,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        GUID(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    code: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
