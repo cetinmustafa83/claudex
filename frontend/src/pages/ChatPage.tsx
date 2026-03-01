@@ -130,7 +130,16 @@ export function ChatPage() {
   useEffect(() => {
     setSelectedFile(null);
     useUIStore.getState().setCurrentView('agent');
+    useUIStore.setState({ pendingFilePath: null });
   }, [chatId, setSelectedFile]);
+
+  const pendingFilePath = useUIStore((s) => s.pendingFilePath);
+
+  useEffect(() => {
+    if (!pendingFilePath) return;
+    setSelectedFile({ path: pendingFilePath, type: 'file', content: '' });
+    useUIStore.setState({ pendingFilePath: null });
+  }, [pendingFilePath, setSelectedFile]);
 
   const handleChatSelect = useCallback(
     (selectedChatId: string) => {

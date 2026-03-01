@@ -394,7 +394,8 @@ class ChatStreamRuntime:
 
         if status == MessageStreamStatus.COMPLETED:
             await self._create_checkpoint()
-            await self._generate_title()
+            title_task = asyncio.create_task(self._generate_title())
+            title_task.add_done_callback(ChatStreamRuntime._on_title_task_done)
             queue_processed = await self._process_next_queued()
             if not queue_processed:
                 await self._emit_context_usage(stream_result)
@@ -721,11 +722,13 @@ class ChatStreamRuntime:
             )
             await db.commit()
 
-        await self.emit_event(
-            "system",
-            {"chat_title": title, "chat_id": self.chat_id},
-            apply_snapshot=False,
-        )
+    @staticmethod
+    def _on_title_task_done(task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error("Background title generation failed: %s", exc)
 
     @classmethod
     async def stop_background_chats(cls) -> None:

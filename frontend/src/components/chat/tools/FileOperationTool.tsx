@@ -1,9 +1,10 @@
 import { memo, useMemo } from 'react';
 import { diffLines } from 'diff';
-import { FileSearch, FileEdit as FileEditIcon, FilePlus } from 'lucide-react';
+import { FileSearch, FileEdit as FileEditIcon, FilePlus, ExternalLink } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ToolAggregate } from '@/types/tools.types';
 import type { ToolComponent } from '@/types/ui.types';
+import { useUIStore } from '@/store/uiStore';
 import { ToolCard } from './common/ToolCard';
 
 interface FileOperationToolProps {
@@ -188,6 +189,17 @@ const FileOperationToolInner: React.FC<FileOperationToolProps> = ({ tool, varian
       (typeof tool.input?.old_string === 'string' || typeof tool.input?.new_string === 'string')) ||
     (variant === 'write' && typeof tool.input?.content === 'string' && tool.input.content);
 
+  const openInEditorAction = filePath ? (
+    <button
+      type="button"
+      onClick={() => useUIStore.getState().openFileInEditor(filePath)}
+      className="rounded-sm opacity-0 transition-opacity duration-150 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-text-quaternary/30 group-hover/tool:opacity-100"
+      title="Open in editor"
+    >
+      <ExternalLink className="h-3 w-3 text-text-tertiary hover:text-text-primary dark:text-text-dark-tertiary dark:hover:text-text-dark-primary" />
+    </button>
+  ) : null;
+
   return (
     <ToolCard
       icon={<Icon className="h-3.5 w-3.5 text-text-secondary dark:text-text-dark-tertiary" />}
@@ -205,6 +217,7 @@ const FileOperationToolInner: React.FC<FileOperationToolProps> = ({ tool, varian
       loadingContent={config.loadingContent}
       error={tool.error}
       expandable={Boolean(hasExpandableContent)}
+      actions={openInEditorAction}
     >
       {renderContent()}
     </ToolCard>

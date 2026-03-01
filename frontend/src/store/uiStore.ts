@@ -20,6 +20,8 @@ type UIStoreState = ThemeState &
   SplitViewActions & {
     commandMenuOpen: boolean;
     setCommandMenuOpen: (open: boolean) => void;
+    pendingFilePath: string | null;
+    openFileInEditor: (path: string) => void;
   };
 
 const getInitialSidebarState = (): boolean => {
@@ -47,6 +49,15 @@ export const useUIStore = create<UIStoreState>()(
 
       commandMenuOpen: false,
       setCommandMenuOpen: (open) => set({ commandMenuOpen: open }),
+
+      pendingFilePath: null,
+      openFileInEditor: (path) =>
+        set({
+          currentView: 'editor',
+          isSplitMode: false,
+          secondaryView: null,
+          pendingFilePath: path,
+        }),
 
       isSplitMode: false,
       currentView: 'agent',
