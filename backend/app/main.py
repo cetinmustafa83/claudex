@@ -18,12 +18,14 @@ from app.api.endpoints import (
     auth,
     chat,
     commands,
+    github,
     integrations,
     marketplace,
     mcps,
     permissions,
     sandbox,
     scheduler,
+    workspace,
 )
 from app.api.endpoints import settings as settings_router
 from app.api.endpoints import skills, websocket
@@ -173,6 +175,11 @@ def create_application() -> FastAPI:
         tags=["Models"],
     )
     application.include_router(
+        workspace.router,
+        prefix=f"{settings.API_V1_STR}/workspaces",
+        tags=["Workspaces"],
+    )
+    application.include_router(
         marketplace.router,
         prefix=f"{settings.API_V1_STR}/marketplace",
         tags=["Marketplace"],
@@ -181,6 +188,11 @@ def create_application() -> FastAPI:
         integrations.router,
         prefix=f"{settings.API_V1_STR}/integrations",
         tags=["Integrations"],
+    )
+    application.include_router(
+        github.router,
+        prefix=f"{settings.API_V1_STR}/github",
+        tags=["GitHub"],
     )
     application.openapi = partial(custom_openapi, application)
 

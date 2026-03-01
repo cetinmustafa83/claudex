@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from claude_agent_sdk import ClaudeSDKClient, CLIConnectionError, CLIJSONDecodeError
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import selectinload
 
 from app.constants import REDIS_KEY_CHAT_CONTEXT_USAGE, REDIS_KEY_CHAT_STREAM_LIVE
 from app.core.config import get_settings
@@ -712,6 +713,7 @@ class ChatStreamRuntime:
         title = await ai_service.generate_title(self.prompt, user)
         if not title:
             return
+        title = title[:255]
 
         async with self.session_factory() as db:
             await db.execute(
@@ -848,8 +850,9 @@ class ChatStreamRuntime:
                 "id": str(chat.id),
                 "user_id": str(chat.user_id),
                 "title": chat.title,
-                "sandbox_id": chat.sandbox_id,
-                "workspace_path": chat.workspace_path,
+                "workspace_id": str(chat.workspace_id),
+                "sandbox_id": chat.sandbox_id or "",
+                "workspace_path": chat.workspace_path or "",
                 "sandbox_provider": chat.sandbox_provider,
                 "session_id": chat.session_id,
             },
@@ -894,7 +897,12 @@ class ChatStreamRuntime:
             )
 
             async with session_factory() as db:
-                chat = await db.get(Chat, UUID(chat_id))
+                result = await db.execute(
+                    select(Chat)
+                    .options(selectinload(Chat.workspace))
+                    .filter(Chat.id == UUID(chat_id))
+                )
+                chat = result.scalar_one_or_none()
                 if not chat:
                     raise ClaudeAgentException(
                         f"Chat {chat_id} not found for idle send-now"

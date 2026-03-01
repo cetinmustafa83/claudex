@@ -51,6 +51,9 @@ ALLOWED_SLASH_COMMANDS = [
     "/pr-comments",
     "/review",
     "/init",
+    "/debug",
+    "/security-review",
+    "/insights",
 ]
 SDK_PERMISSION_MODE_MAP: dict[
     str, Literal["default", "acceptEdits", "plan", "bypassPermissions"]
@@ -128,7 +131,7 @@ class ClaudeAgentService:
         ).get_user_settings(user.id)
 
         sandbox_provider = chat.sandbox_provider or SandboxProviderType.DOCKER.value
-        sandbox_id = chat.sandbox_id
+        sandbox_id: str = chat.sandbox_id or ""
         workspace_path = chat.workspace_path
         claude_cwd = SANDBOX_HOME_DIR
         if workspace_path and sandbox_provider == SandboxProviderType.DOCKER.value:
@@ -291,13 +294,14 @@ class ClaudeAgentService:
             session_factory=self.session_factory
         ).get_user_settings(user.id)
 
-        model_id = "claude-haiku-4-5-20251001"
+        model_id = "claude-haiku-4-5"
         env, _, actual_model_id = self._build_auth_env(model_id, user_settings)
 
         options = ClaudeAgentOptions(
             system_prompt=(
-                "Generate a short conversation title (3-8 words) for the "
-                "user's message. Reply with ONLY the title, nothing else."
+                "Generate a short conversation title (3-8 words, max 255 characters) for the "
+                "user's message. Reply with ONLY the title, nothing else. "
+                "Do not explain, analyze, or comment on the message."
             ),
             permission_mode="default",
             model=actual_model_id,

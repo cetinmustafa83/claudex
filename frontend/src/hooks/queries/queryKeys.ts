@@ -17,6 +17,7 @@ export const queryKeys = {
     vncUrl: (sandboxId: string) => ['sandbox', sandboxId, 'vnc-url'] as const,
     browserStatus: (sandboxId: string) => ['sandbox', sandboxId, 'browser-status'] as const,
   },
+  workspaces: ['workspaces'] as const,
   models: 'models',
   scheduler: {
     tasks: ['scheduler', 'tasks'] as const,
@@ -27,5 +28,8 @@ export const queryKeys = {
     catalog: ['marketplace', 'catalog'] as const,
     pluginDetails: (pluginName: string) => ['marketplace', 'plugin', pluginName] as const,
     installed: ['marketplace', 'installed'] as const,
+  },
+  github: {
+    repos: (query: string) => ['github-repos', query] as const,
   },
 } as const;

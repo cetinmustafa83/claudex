@@ -20,6 +20,7 @@ class ErrorCode(str, Enum):
     MARKETPLACE_FETCH_FAILED = "MARKETPLACE_FETCH_FAILED"
     MARKETPLACE_PLUGIN_NOT_FOUND = "MARKETPLACE_PLUGIN_NOT_FOUND"
     MARKETPLACE_INSTALL_FAILED = "MARKETPLACE_INSTALL_FAILED"
+    WORKSPACE_NOT_FOUND = "WORKSPACE_NOT_FOUND"
     VALIDATION_ERROR = "VALIDATION_ERROR"
     RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED"
     EXTERNAL_SERVICE_ERROR = "EXTERNAL_SERVICE_ERROR"
@@ -198,6 +199,17 @@ class MarketplaceException(ServiceException):
         self,
         message: str,
         error_code: ErrorCode = ErrorCode.MARKETPLACE_FETCH_FAILED,
+        details: dict[str, str] | None = None,
+        status_code: int = 400,
+    ):
+        super().__init__(message, error_code, details, status_code)
+
+
+class WorkspaceException(ServiceException):
+    def __init__(
+        self,
+        message: str,
+        error_code: ErrorCode = ErrorCode.WORKSPACE_NOT_FOUND,
         details: dict[str, str] | None = None,
         status_code: int = 400,
     ):
