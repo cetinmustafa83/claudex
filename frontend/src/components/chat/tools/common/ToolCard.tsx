@@ -64,7 +64,6 @@ const ToolCardInner: React.FC<ToolCardProps> = ({
           className={`h-3 w-3 text-text-quaternary transition-transform duration-200 dark:text-text-dark-quaternary ${expanded ? 'rotate-90' : ''}`}
         />
       )}
-      {!expandable && actions}
     </div>
   );
 
@@ -99,18 +98,21 @@ const ToolCardInner: React.FC<ToolCardProps> = ({
 
   return (
     <div className={`group/tool ${className}`}>
-      {hasExpandableContent ? (
-        <button
-          type="button"
-          onClick={() => setExpanded((prev) => !prev)}
-          className="-ml-1 rounded-md px-1 py-0.5 text-left transition-colors duration-150 hover:bg-surface-hover dark:hover:bg-surface-dark-hover"
-          aria-expanded={expanded}
-        >
-          {header}
-        </button>
-      ) : (
-        <div className="-ml-1 px-1 py-0.5">{header}</div>
-      )}
+      <div className="flex items-center gap-1">
+        {hasExpandableContent ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((prev) => !prev)}
+            className="-ml-1 rounded-md px-1 py-0.5 text-left transition-colors duration-150 hover:bg-surface-hover dark:hover:bg-surface-dark-hover"
+            aria-expanded={expanded}
+          >
+            {header}
+          </button>
+        ) : (
+          <div className="-ml-1 px-1 py-0.5">{header}</div>
+        )}
+        {actions}
+      </div>
       {meta}
       {showChildren && children && (
         <div className="mt-1.5 border-l border-border pl-3 dark:border-border-dark">{children}</div>
