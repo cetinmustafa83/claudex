@@ -2,6 +2,7 @@
 
 ## Project Context
 
+- The `frontend/backend-sidecar/` directory is a build artifact — never edit files there; all backend source lives in `backend/`
 - Open-source, self-hosted application — designed for single-user or small-team use, not enterprise scale
 - Runs as a single API instance (no distributed workers, no multi-replica coordination)
 - Do not introduce distributed-system patterns (distributed locks, cross-instance heartbeats, consensus protocols) — prefer simple in-process state (e.g., in-memory sets/dicts, asyncio tasks)
