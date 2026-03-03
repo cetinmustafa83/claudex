@@ -245,6 +245,7 @@ class ChatService(BaseDbService[Chat]):
                     status_code=404,
                 )
 
+            workspace_id = chat.workspace_id
             now = datetime.now(timezone.utc)
             chat.deleted_at = now
 
@@ -258,6 +259,35 @@ class ChatService(BaseDbService[Chat]):
             await db.commit()
 
             asyncio.create_task(session_registry.terminate(str(chat_id)))
+
+            # Destroy the workspace container if no chats remain
+            remaining = await db.execute(
+                select(func.count(Chat.id)).filter(
+                    Chat.workspace_id == workspace_id,
+                    Chat.deleted_at.is_(None),
+                )
+            )
+            if remaining.scalar() == 0:
+                ws_result = await db.execute(
+                    select(Workspace).filter(
+                        Workspace.id == workspace_id,
+                        Workspace.deleted_at.is_(None),
+                    )
+                )
+                workspace = ws_result.scalar_one_or_none()
+                if workspace:
+                    workspace.deleted_at = now
+                    await db.commit()
+                    if workspace.sandbox_id:
+                        provider = SandboxProviderFactory.create_bound(
+                            workspace.sandbox_provider,
+                            sandbox_id=workspace.sandbox_id,
+                            workspace_path=workspace.workspace_path,
+                        )
+                        sandbox_service = SandboxService(provider)
+                        asyncio.create_task(
+                            sandbox_service.delete_sandbox(workspace.sandbox_id)
+                        )
 
     async def get_chat_sandbox_id(self, chat_id: UUID, user: User) -> str | None:
         async with self.session_factory() as db:
@@ -292,6 +322,14 @@ class ChatService(BaseDbService[Chat]):
             result = await db.execute(chat_query)
             chat_ids = [str(row[0]) for row in result.fetchall()]
 
+            ws_result = await db.execute(
+                select(Workspace).filter(
+                    Workspace.user_id == user.id,
+                    Workspace.deleted_at.is_(None),
+                )
+            )
+            workspaces = list(ws_result.scalars().all())
+
             now = datetime.now(timezone.utc)
 
             await db.execute(
@@ -311,10 +349,25 @@ class ChatService(BaseDbService[Chat]):
                 .values(deleted_at=now)
             )
 
+            for ws in workspaces:
+                ws.deleted_at = now
+
             await db.commit()
 
             for cid in chat_ids:
                 asyncio.create_task(session_registry.terminate(cid))
+
+            for ws in workspaces:
+                if ws.sandbox_id:
+                    provider = SandboxProviderFactory.create_bound(
+                        ws.sandbox_provider,
+                        sandbox_id=ws.sandbox_id,
+                        workspace_path=ws.workspace_path,
+                    )
+                    sandbox_service = SandboxService(provider)
+                    asyncio.create_task(
+                        sandbox_service.delete_sandbox(ws.sandbox_id)
+                    )
 
             return len(chat_ids)
 
