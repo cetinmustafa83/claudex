@@ -8,7 +8,6 @@ interface UseMessageInitializationParams {
   fetchedMessages: Message[];
   chatId: string | undefined;
   selectedModelId: string | null | undefined;
-  hasMessages: boolean;
   initialPromptFromRoute: string | null;
   initialPromptSent: boolean;
   wasAborted: boolean;
@@ -23,7 +22,6 @@ export function useMessageInitialization({
   fetchedMessages,
   chatId,
   selectedModelId,
-  hasMessages,
   initialPromptFromRoute,
   initialPromptSent,
   wasAborted,
@@ -33,14 +31,14 @@ export function useMessageInitialization({
   setMessages,
   setInitialPrompt,
 }: UseMessageInitializationParams) {
-  const hasMessagesRef = useRef(hasMessages);
-  hasMessagesRef.current = hasMessages;
+  const initializedChatRef = useRef<string | undefined>();
 
   useEffect(() => {
     if (!fetchedMessages || !chatId || isLoading || wasAborted) return;
 
-    // Skip reprocessing during streaming to preserve attachment references and prevent image flashing
-    if (isStreaming && hasMessagesRef.current) return;
+    // Skip reprocessing during streaming to preserve attachment references and prevent image flashing,
+    // but always allow initialization when switching to a different chat
+    if (isStreaming && initializedChatRef.current === chatId) return;
 
     const formattedMessages = fetchedMessages.map((msg: Message) => {
       const processedAttachments = msg.attachments?.map((attachment) => {
@@ -75,6 +73,8 @@ export function useMessageInitialization({
     if (latestKnownSeq > 0) {
       chatStorage.setEventId(chatId, String(latestKnownSeq));
     }
+
+    initializedChatRef.current = chatId;
 
     if (
       initialPromptFromRoute &&

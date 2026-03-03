@@ -103,7 +103,6 @@ export function ChatSessionOrchestrator({
     fetchedMessages,
     chatId,
     selectedModelId,
-    hasMessages: messages.length > 0,
     initialPromptFromRoute,
     initialPromptSent,
     wasAborted,
