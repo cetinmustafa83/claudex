@@ -90,7 +90,7 @@ services:
 networks:
   sandbox:
     name: claudex-sandbox-net
-    external: true
+    external: false
 
 volumes:
   postgres_data:
