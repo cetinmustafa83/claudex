@@ -3,7 +3,7 @@ import { SquareTerminal } from 'lucide-react';
 import type { ToolAggregate } from '@/types/tools.types';
 import { ToolCard } from './common/ToolCard';
 
-interface TaskOutputInput {
+interface AgentOutputInput {
   task_id?: string;
   bash_id?: string;
   block?: boolean;
@@ -16,8 +16,8 @@ const formatOutput = (result: unknown): string => {
   return JSON.stringify(result, null, 2);
 };
 
-const TaskOutputToolInner: React.FC<{ tool: ToolAggregate }> = ({ tool }) => {
-  const input = tool.input as TaskOutputInput | undefined;
+const AgentOutputToolInner: React.FC<{ tool: ToolAggregate }> = ({ tool }) => {
+  const input = tool.input as AgentOutputInput | undefined;
   const taskId = input?.task_id ?? '';
   const truncatedId = taskId.length > 12 ? `${taskId.slice(0, 12)}\u2026` : taskId;
   const idSuffix = taskId ? `: ${truncatedId}` : '';
@@ -34,22 +34,20 @@ const TaskOutputToolInner: React.FC<{ tool: ToolAggregate }> = ({ tool }) => {
       title={(status) => {
         switch (status) {
           case 'completed':
-            return `Got task output${idSuffix}`;
+            return `Got agent output${idSuffix}`;
           case 'failed':
-            return `Failed to get task output${idSuffix}`;
+            return `Failed to get agent output${idSuffix}`;
           default:
-            return `Getting task output${idSuffix}`;
+            return `Getting agent output${idSuffix}`;
         }
       }}
-      loadingContent="Waiting for task output\u2026"
+      loadingContent="Waiting for agent output\u2026"
       error={tool.error}
       expandable={hasOutput}
     >
       {hasOutput && (
-        <div>
-          <div className="max-h-48 overflow-auto rounded bg-black/5 px-2 py-1.5 font-mono text-xs text-text-secondary dark:bg-white/5 dark:text-text-dark-secondary">
-            <pre className="whitespace-pre-wrap break-all">{output}</pre>
-          </div>
+        <div className="max-h-48 overflow-auto rounded bg-black/5 px-2 py-1.5 font-mono text-xs text-text-secondary dark:bg-white/5 dark:text-text-dark-secondary">
+          <pre className="whitespace-pre-wrap break-all">{output}</pre>
         </div>
       )}
     </ToolCard>
@@ -57,7 +55,7 @@ const TaskOutputToolInner: React.FC<{ tool: ToolAggregate }> = ({ tool }) => {
 };
 
 const BashOutputToolInner: React.FC<{ tool: ToolAggregate }> = ({ tool }) => {
-  const input = tool.input as TaskOutputInput | undefined;
+  const input = tool.input as AgentOutputInput | undefined;
   const bashId = input?.bash_id ?? '';
   const truncatedId = bashId.length > 12 ? `${bashId.slice(0, 12)}\u2026` : bashId;
   const idSuffix = bashId ? `: ${truncatedId}` : '';
@@ -86,15 +84,13 @@ const BashOutputToolInner: React.FC<{ tool: ToolAggregate }> = ({ tool }) => {
       expandable={hasOutput}
     >
       {hasOutput && (
-        <div>
-          <div className="max-h-48 overflow-auto rounded bg-black/5 px-2 py-1.5 font-mono text-xs text-text-secondary dark:bg-white/5 dark:text-text-dark-secondary">
-            <pre className="whitespace-pre-wrap break-all">{output}</pre>
-          </div>
+        <div className="max-h-48 overflow-auto rounded bg-black/5 px-2 py-1.5 font-mono text-xs text-text-secondary dark:bg-white/5 dark:text-text-dark-secondary">
+          <pre className="whitespace-pre-wrap break-all">{output}</pre>
         </div>
       )}
     </ToolCard>
   );
 };
 
-export const TaskOutputTool = memo(TaskOutputToolInner);
+export const AgentOutputTool = memo(AgentOutputToolInner);
 export const BashOutputTool = memo(BashOutputToolInner);

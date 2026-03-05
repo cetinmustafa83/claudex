@@ -1021,12 +1021,14 @@ class ChatStreamRuntime:
                         # (/home/user/ → {host_base}/{sandbox_id}/), so
                         # point Claude at the real host path, not the
                         # workspace path.
-                        host_base = Path(
-                            settings.get_host_sandbox_base_dir()
-                        ).expanduser().resolve()
-                        attachment_base_dir = str(
-                            host_base / runtime.chat.sandbox_id
+                        host_base = (
+                            Path(settings.get_host_sandbox_base_dir())
+                            .expanduser()
+                            .resolve()
                         )
+                        sid = runtime.chat.sandbox_id
+                        assert sid is not None
+                        attachment_base_dir = str(host_base / sid)
                     stream = ai_service.stream_response(
                         client=session.client,
                         prompt=request.prompt,

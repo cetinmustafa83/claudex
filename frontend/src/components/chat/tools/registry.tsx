@@ -6,7 +6,7 @@ const toLazy = (loader: ToolModuleLoader): ToolComponent =>
   lazy(loader) as unknown as ToolComponent;
 
 const toolLoaders: Record<string, ToolModuleLoader> = {
-  Task: () => import('./Task').then((m) => ({ default: m.Task })),
+  Agent: () => import('./AgentTool').then((m) => ({ default: m.AgentTool })),
   WebSearch: () => import('./WebSearch').then((m) => ({ default: m.WebSearch })),
   TodoWrite: () => import('./TodoWrite').then((m) => ({ default: m.TodoWrite })),
   Write: () => import('./FileOperationTool').then((m) => ({ default: m.WriteTool })),
@@ -19,8 +19,8 @@ const toolLoaders: Record<string, ToolModuleLoader> = {
   NotebookEdit: () => import('./NotebookEditTool').then((m) => ({ default: m.NotebookEditTool })),
   WebFetch: () => import('./WebFetchTool').then((m) => ({ default: m.WebFetchTool })),
   LSP: () => import('./LSPTool').then((m) => ({ default: m.LSPTool })),
-  TaskOutput: () => import('./TaskOutputTool').then((m) => ({ default: m.TaskOutputTool })),
-  BashOutput: () => import('./TaskOutputTool').then((m) => ({ default: m.BashOutputTool })),
+  AgentOutput: () => import('./AgentOutputTool').then((m) => ({ default: m.AgentOutputTool })),
+  BashOutput: () => import('./AgentOutputTool').then((m) => ({ default: m.BashOutputTool })),
   KillShell: () => import('./KillShellTool').then((m) => ({ default: m.KillShellTool })),
   EnterPlanMode: () => import('./PlanModeTool').then((m) => ({ default: m.EnterPlanModeTool })),
   ExitPlanMode: () => import('./PlanModeTool').then((m) => ({ default: m.ExitPlanModeTool })),
