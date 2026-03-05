@@ -81,7 +81,7 @@ services:
     depends_on:
       - api
     ports:
-      - "${FRONTEND_PORT}:3010"
+      - "${FRONTEND_PORT}:3000"
     volumes:
       - ./frontend:/app
       - /app/node_modules
