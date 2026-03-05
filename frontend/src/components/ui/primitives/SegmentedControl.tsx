@@ -42,7 +42,8 @@ export function SegmentedControl<T extends string = string>({
     setIndicatorStyle({
       opacity: 1,
       width: activeButton.offsetWidth,
-      transform: `translateX(${activeButton.offsetLeft}px)`,
+      height: activeButton.offsetHeight,
+      transform: `translate(${activeButton.offsetLeft}px, ${activeButton.offsetTop}px)`,
     });
   }, [value, options]);
 
@@ -61,13 +62,13 @@ export function SegmentedControl<T extends string = string>({
     <div
       ref={containerRef}
       className={cn(
-        'relative inline-flex rounded-lg border border-border bg-surface-tertiary p-0.5 dark:border-border-dark dark:bg-surface-dark-secondary',
+        'relative inline-flex rounded-lg border border-border bg-surface-tertiary dark:border-border-dark dark:bg-surface-dark-secondary',
         className,
       )}
       role="radiogroup"
     >
       <span
-        className="absolute left-0.5 top-0.5 h-[calc(100%-4px)] rounded-md bg-surface-secondary shadow-sm transition-[transform,width] duration-300 ease-out dark:bg-surface-dark-hover"
+        className="absolute left-0 top-0 rounded-[7px] bg-surface-secondary shadow-sm transition-[transform,width,height] duration-300 ease-out dark:bg-surface-dark-hover"
         style={indicatorStyle}
       />
       {options.map((option) => {
@@ -81,7 +82,7 @@ export function SegmentedControl<T extends string = string>({
             disabled={option.disabled}
             onClick={() => !option.disabled && onChange(option.value)}
             className={cn(
-              'relative z-10 rounded-md px-3.5 py-1.5 text-xs font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-quaternary/30',
+              'relative z-10 rounded-[7px] px-3.5 py-1.5 text-xs font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-quaternary/30',
               isActive
                 ? 'text-text-primary dark:text-text-dark-primary'
                 : 'text-text-quaternary hover:text-text-secondary dark:text-text-dark-quaternary dark:hover:text-text-dark-secondary',
