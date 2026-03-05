@@ -43,6 +43,14 @@ class HostSandboxTransport(BaseSandboxTransport):
         else:
             self._workspace_dir = self._home_dir
 
+    def _resolve_virtual_env_paths(self, envs: dict[str, str]) -> dict[str, str]:
+        return {
+            key: str(self._resolve_cwd(value))
+            if value.startswith(SANDBOX_HOME_DIR)
+            else value
+            for key, value in envs.items()
+        }
+
     def _resolve_cwd(self, cwd: str) -> Path:
         if cwd == SANDBOX_HOME_DIR:
             return self._home_dir
@@ -91,6 +99,7 @@ class HostSandboxTransport(BaseSandboxTransport):
 
         command_args = shlex.split(self._build_command())
         envs, cwd, requested_user = self._prepare_environment()
+        envs = self._resolve_virtual_env_paths(envs)
         current_path = os.environ.get("PATH", "")
         env = {
             **os.environ,
