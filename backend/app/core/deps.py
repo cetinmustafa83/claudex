@@ -177,13 +177,9 @@ async def get_workspace_service(
 
 
 async def get_chat_service(
-    file_service: StorageService = Depends(get_storage_service),
-    sandbox_service: SandboxService = Depends(get_sandbox_service),
     user_service: UserService = Depends(get_user_service),
 ) -> AsyncIterator[ChatService]:
     yield ChatService(
-        file_service,
-        sandbox_service,
         user_service,
         session_factory=SessionLocal,
     )

@@ -26,7 +26,7 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     prompt: str = Field(..., min_length=1, max_length=100000)
-    chat_id: UUID | None = None
+    chat_id: UUID
     model_id: str = Field(..., min_length=1, max_length=255)
     attached_files: list[UploadFile] | None = None
     permission_mode: Literal["plan", "ask", "auto"] = "auto"

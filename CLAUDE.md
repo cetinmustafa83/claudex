@@ -41,8 +41,11 @@
 - Do not delete existing comments without asking first — they may capture context that isn't obvious from the code
 - Let the code speak for itself - use clear variable/function names instead of comments
 - Do not use decorative section comments (e.g., `# ── Section ──────`) — code structure should be self-evident from class/method organization
+- Method-level comments should explain the *why* and *context*, not just restate the method name — describe the purpose, who uses it, and any non-obvious behavior (e.g., "Catch-up mechanism for SSE reconnection: when a client reconnects it sends the last seq it saw, and this method pages through persisted events so nothing is missed before switching to live pub/sub")
 - Example — no comment needed (self-explanatory): `user_dir.mkdir(parents=True, exist_ok=True)`
 - Example — comment needed (non-obvious why): `# Read from the API host, not the sandbox — sandbox containers don't have the user's global git config`
+- Example — bad method comment (terse, restates the name): `# Yield persisted events after a given seq`
+- Example — good method comment (explains why and context): `# Catch-up mechanism for SSE reconnection: when a client reconnects (network blip, page refresh) it sends the last seq it saw, and this method pages through all persisted events after that seq so the client doesn't miss anything before switching to live Redis pub/sub.`
 - Avoid no-op pass-through wrappers (e.g., a function that only calls another function with identical args/return)
 - If a wrapper exists, it must add concrete value (validation, transformation, error handling, compatibility boundary, or stable public API surface)
 - Prefer direct imports/calls over indirection when behavior is unchanged

@@ -16,35 +16,31 @@ from app.models.db_models.chat import Chat, Message, MessageAttachment
 from app.models.db_models.enums import MessageRole, MessageStreamStatus, StreamEventKind
 from app.models.db_models.user import User, UserSettings
 from app.models.db_models.workspace import Workspace
+from app.models.schemas.chat import Chat as ChatSchema
 from app.models.schemas.chat import ChatCreate, ChatRequest, ChatUpdate
+from app.models.schemas.chat import Message as MessageSchema
 from app.models.schemas.pagination import (
     CursorPaginatedResponse,
     PaginatedResponse,
     PaginationParams,
 )
 from app.models.schemas.settings import ProviderType
-from app.models.schemas.chat import Chat as ChatSchema, Message as MessageSchema
 from app.models.types import ChatCompletionResult, MessageAttachmentDict
 from app.prompts.system_prompt import build_system_prompt_for_chat
+from app.services.claude_session_registry import session_registry
 from app.services.db import BaseDbService, SessionFactoryType
-from app.services.provider import ProviderService
 from app.services.exceptions import ChatException, ErrorCode
 from app.services.message import MessageService
+from app.services.provider import ProviderService
 from app.services.sandbox import SandboxService
-from app.services.sandbox_providers import (
-    LocalDockerProvider,
-    SandboxProviderType,
-)
+from app.services.sandbox_providers import LocalDockerProvider, SandboxProviderType
 from app.services.sandbox_providers.factory import SandboxProviderFactory
-from app.services.streaming.runtime import ChatStreamRuntime
-from app.services.streaming.types import ChatStreamRequest
-from app.services.claude_session_registry import session_registry
 from app.services.storage import StorageService
+from app.services.streaming.runtime import ChatStreamRuntime
+from app.services.streaming.types import ChatStreamRequest, StreamEnvelope
 from app.services.user import UserService
-
-from app.utils.cache import CachePubSub
-from app.utils.cache import cache_connection, cache_pubsub
 from app.utils.attachment_urls import AttachmentURL
+from app.utils.cache import CachePubSub, cache_connection, cache_pubsub
 from app.utils.validators import APIKeyValidationError, validate_model_api_keys
 
 settings = get_settings()
@@ -56,20 +52,18 @@ TERMINAL_STREAM_EVENT_TYPES = {"cancelled", "complete", "error"}
 class ChatService(BaseDbService[Chat]):
     def __init__(
         self,
-        storage_service: StorageService,
-        sandbox_service: SandboxService,
         user_service: UserService,
         session_factory: SessionFactoryType | None = None,
     ) -> None:
         super().__init__(session_factory)
-        self.sandbox_service = sandbox_service
-        self.storage_service = storage_service
-        self.user_service = user_service
         self.message_service = MessageService(session_factory=self._session_factory)
+        self._user_service = user_service
         self._provider_service = ProviderService()
 
     @staticmethod
-    def _sandbox_for_workspace(workspace: Workspace) -> SandboxService:
+    def sandbox_for_workspace(workspace: Workspace) -> SandboxService:
+        # Create a short-lived SandboxService bound to the workspace's
+        # provider and container — used for file ops, checkpoints, and cleanup.
         provider = SandboxProviderFactory.create_bound(
             workspace.sandbox_provider,
             sandbox_id=workspace.sandbox_id,
@@ -79,16 +73,14 @@ class ChatService(BaseDbService[Chat]):
 
     @property
     def session_factory(self) -> SessionFactoryType:
+        # Exposed for endpoints that need to pass the factory to other
+        # services (e.g. ClaudeAgentService) without owning a DB dependency.
         return self._session_factory
-
-    @session_factory.setter
-    def session_factory(self, value: SessionFactoryType) -> None:
-        self._session_factory = value
-        self.message_service.session_factory = value
 
     async def get_user_chats(
         self, user: User, pagination: PaginationParams | None = None
     ) -> PaginatedResponse[ChatSchema]:
+        # Paginated list of non-deleted chats, pinned first, then by most recent.
         if pagination is None:
             pagination = PaginationParams()
 
@@ -121,10 +113,15 @@ class ChatService(BaseDbService[Chat]):
             )
 
     async def create_chat(self, user: User, chat_data: ChatCreate) -> Chat:
-        user_settings = await self.user_service.get_user_settings(user.id)
-        self._validate_api_keys(user_settings, chat_data.model_id)
+        # Validate API keys, verify workspace ownership, and create a new chat.
+        user_settings = await self._user_service.get_user_settings(user.id)
+        try:
+            validate_model_api_keys(user_settings, chat_data.model_id)
+        except APIKeyValidationError as e:
+            raise ChatException(
+                str(e), error_code=ErrorCode.API_KEY_MISSING, status_code=400
+            ) from e
 
-        # Verify workspace exists and belongs to user
         async with self.session_factory() as db:
             ws_result = await db.execute(
                 select(Workspace).filter(
@@ -153,7 +150,7 @@ class ChatService(BaseDbService[Chat]):
 
             query = (
                 select(Chat)
-                .options(selectinload(Chat.messages), selectinload(Chat.workspace))
+                .options(selectinload(Chat.workspace))
                 .filter(Chat.id == chat.id)
             )
             result = await db.execute(query)
@@ -164,6 +161,7 @@ class ChatService(BaseDbService[Chat]):
     async def update_chat(
         self, chat_id: UUID, chat_update: ChatUpdate, user: User
     ) -> Chat:
+        # Update title and/or pin state for a chat owned by the user.
         async with self.session_factory() as db:
             result = await db.execute(
                 select(Chat)
@@ -198,6 +196,7 @@ class ChatService(BaseDbService[Chat]):
             return chat
 
     async def get_chat(self, chat_id: UUID, user: User) -> Chat:
+        # Fetch a single chat with its messages (non-deleted) and workspace eagerly loaded.
         async with self.session_factory() as db:
             query = (
                 select(Chat)
@@ -227,6 +226,8 @@ class ChatService(BaseDbService[Chat]):
             return chat
 
     async def delete_chat(self, chat_id: UUID, user: User) -> None:
+        # Soft-delete a chat and its messages, terminate the active session,
+        # and destroy the workspace container if no other chats reference it.
         async with self.session_factory() as db:
             result = await db.execute(
                 select(Chat).filter(
@@ -279,17 +280,13 @@ class ChatService(BaseDbService[Chat]):
                     workspace.deleted_at = now
                     await db.commit()
                     if workspace.sandbox_id:
-                        provider = SandboxProviderFactory.create_bound(
-                            workspace.sandbox_provider,
-                            sandbox_id=workspace.sandbox_id,
-                            workspace_path=workspace.workspace_path,
-                        )
-                        sandbox_service = SandboxService(provider)
+                        ws_sandbox = self.sandbox_for_workspace(workspace)
                         asyncio.create_task(
-                            sandbox_service.delete_sandbox(workspace.sandbox_id)
+                            ws_sandbox.delete_sandbox(workspace.sandbox_id)
                         )
 
     async def get_chat_sandbox_id(self, chat_id: UUID, user: User) -> str | None:
+        # Look up the sandbox ID for a chat via its workspace, without loading the full chat.
         async with self.session_factory() as db:
             result = await db.execute(
                 select(Workspace.sandbox_id)
@@ -314,6 +311,8 @@ class ChatService(BaseDbService[Chat]):
             return sandbox_id
 
     async def delete_all_chats(self, user: User) -> int:
+        # Bulk soft-delete all chats, messages, and workspaces for a user,
+        # then fire-and-forget session termination and sandbox cleanup.
         async with self.session_factory() as db:
             chat_query = select(Chat.id).filter(
                 Chat.user_id == user.id,
@@ -359,27 +358,32 @@ class ChatService(BaseDbService[Chat]):
 
             for ws in workspaces:
                 if ws.sandbox_id:
-                    provider = SandboxProviderFactory.create_bound(
-                        ws.sandbox_provider,
-                        sandbox_id=ws.sandbox_id,
-                        workspace_path=ws.workspace_path,
-                    )
-                    sandbox_service = SandboxService(provider)
-                    asyncio.create_task(sandbox_service.delete_sandbox(ws.sandbox_id))
+                    ws_sandbox = self.sandbox_for_workspace(ws)
+                    asyncio.create_task(ws_sandbox.delete_sandbox(ws.sandbox_id))
 
             return len(chat_ids)
 
     async def get_chat_messages(
         self, chat_id: UUID, user: User, cursor: str | None = None, limit: int = 20
     ) -> CursorPaginatedResponse[MessageSchema]:
-        has_access = await self._verify_chat_access(chat_id, user.id)
-        if not has_access:
-            raise ChatException(
-                "Chat not found or you don't have permission to access messages",
-                error_code=ErrorCode.CHAT_ACCESS_DENIED,
-                details={"chat_id": str(chat_id)},
-                status_code=403,
+        # Cursor-paginated message list — verify ownership then delegate to MessageService.
+        async with self.session_factory() as db:
+            result = await db.execute(
+                select(
+                    exists().where(
+                        Chat.id == chat_id,
+                        Chat.user_id == user.id,
+                        Chat.deleted_at.is_(None),
+                    )
+                )
             )
+            if not result.scalar():
+                raise ChatException(
+                    "Chat not found or you don't have permission to access messages",
+                    error_code=ErrorCode.CHAT_ACCESS_DENIED,
+                    details={"chat_id": str(chat_id)},
+                    status_code=403,
+                )
 
         return await self.message_service.get_chat_messages(chat_id, cursor, limit)
 
@@ -388,6 +392,10 @@ class ChatService(BaseDbService[Chat]):
         chat_id: UUID,
         after_seq: int,
     ) -> AsyncIterator[dict[str, Any]]:
+        # Catch-up mechanism for SSE reconnection: when a client reconnects
+        # (network blip, page refresh) it sends the last seq it saw, and this
+        # method pages through all persisted events after that seq so the
+        # client doesn't miss anything before switching to live Redis pub/sub.
         page_size = 5000
         cursor = after_seq
 
@@ -401,20 +409,16 @@ class ChatService(BaseDbService[Chat]):
                 return
 
             for event in backlog:
-                envelope = {
-                    "chatId": str(event.chat_id),
-                    "messageId": str(event.message_id),
-                    "streamId": str(event.stream_id),
-                    "seq": event.seq,
-                    "kind": event.event_type,
-                    "payload": event.render_payload,
-                    "ts": event.created_at.isoformat() if event.created_at else None,
-                }
-                yield {
-                    "id": str(event.seq),
-                    "event": StreamEventKind.STREAM.value,
-                    "data": json.dumps(envelope, ensure_ascii=False),
-                }
+                yield self._build_stream_sse_event(
+                    chat_id=event.chat_id,
+                    message_id=event.message_id,
+                    stream_id=event.stream_id,
+                    seq=int(event.seq),
+                    kind=event.event_type,
+                    payload=event.render_payload,
+                )
+                if event.event_type in TERMINAL_STREAM_EVENT_TYPES:
+                    return
 
             next_cursor = int(backlog[-1].seq)
             if next_cursor <= cursor:
@@ -432,6 +436,9 @@ class ChatService(BaseDbService[Chat]):
 
     @staticmethod
     def _build_stream_sse_event(
+        # Single source of truth for the SSE envelope shape sent to the frontend —
+        # every stream event (backlog replay, live Redis, errors) goes through here
+        # so the client always receives a consistent {id, event, data} structure.
         *,
         chat_id: UUID,
         message_id: UUID,
@@ -439,17 +446,15 @@ class ChatService(BaseDbService[Chat]):
         seq: int,
         kind: str,
         payload: dict[str, Any],
-        ts: str | None = None,
     ) -> dict[str, Any]:
-        envelope = {
-            "chatId": str(chat_id),
-            "messageId": str(message_id),
-            "streamId": str(stream_id),
-            "seq": seq,
-            "kind": kind,
-            "payload": payload,
-            "ts": ts or datetime.now(timezone.utc).isoformat(),
-        }
+        envelope = StreamEnvelope.build(
+            chat_id=chat_id,
+            message_id=message_id,
+            stream_id=stream_id,
+            seq=seq,
+            kind=kind,
+            payload=payload,
+        )
         return {
             "id": str(seq),
             "event": StreamEventKind.STREAM.value,
@@ -465,39 +470,28 @@ class ChatService(BaseDbService[Chat]):
         fallback_seq: int,
         error_message: str,
     ) -> dict[str, Any]:
+        # Build an error SSE event that the client can always display. The caller
+        # (create_event_stream) already resolves message/stream IDs before entering
+        # the try block — if they're None, no active stream existed so we synthesize
+        # IDs. If they're set, we persist the error to DB for replay on reconnect.
         payload = {"error": error_message}
-        resolved_message_id = message_id
-        resolved_stream_id = stream_id
 
-        if resolved_message_id is None:
-            latest_assistant = await self.message_service.get_latest_assistant_message(
-                chat_id
-            )
-            if latest_assistant is not None:
-                resolved_message_id = latest_assistant.id
-                if resolved_stream_id is None:
-                    resolved_stream_id = latest_assistant.active_stream_id
-
-        if resolved_message_id is None:
-            synthetic_message_id = uuid4()
-            synthetic_stream_id = resolved_stream_id or uuid4()
-            synthetic_seq = max(int(fallback_seq), 0) + 1
+        if message_id is None:
             return self._build_stream_sse_event(
                 chat_id=chat_id,
-                message_id=synthetic_message_id,
-                stream_id=synthetic_stream_id,
-                seq=synthetic_seq,
+                message_id=uuid4(),
+                stream_id=stream_id or uuid4(),
+                seq=max(int(fallback_seq), 0) + 1,
                 kind="error",
                 payload=payload,
             )
 
-        if resolved_stream_id is None:
-            resolved_stream_id = uuid4()
+        resolved_stream_id = stream_id or uuid4()
 
         try:
             error_seq = await self.message_service.append_event_with_next_seq(
                 chat_id=chat_id,
-                message_id=resolved_message_id,
+                message_id=message_id,
                 stream_id=resolved_stream_id,
                 event_type="error",
                 render_payload=payload,
@@ -513,7 +507,7 @@ class ChatService(BaseDbService[Chat]):
 
         return self._build_stream_sse_event(
             chat_id=chat_id,
-            message_id=resolved_message_id,
+            message_id=message_id,
             stream_id=resolved_stream_id,
             seq=error_seq,
             kind="error",
@@ -526,6 +520,10 @@ class ChatService(BaseDbService[Chat]):
         last_seq: int,
         live_pubsub: CachePubSub,
     ) -> AsyncIterator[dict[str, Any]]:
+        # Real-time leg of the SSE connection: after the backlog replay catches
+        # the client up, this loop waits for Redis pub/sub notifications and
+        # reads new events from the DB. Terminates when a terminal event
+        # (complete/cancelled/error) is encountered.
         while True:
             message = await live_pubsub.get_message(
                 ignore_subscribe_messages=True, timeout=1.0
@@ -535,8 +533,6 @@ class ChatService(BaseDbService[Chat]):
             if message.get("type") != "message":
                 continue
 
-            # Always read from persisted event log so delivery stays sequence-ordered
-            # even when multiple producers publish out of order on Redis Pub/Sub.
             live_events = await self.message_service.get_chat_events_after_seq(
                 chat_id=chat_id,
                 after_seq=last_seq,
@@ -550,7 +546,6 @@ class ChatService(BaseDbService[Chat]):
                     seq=int(event.seq),
                     kind=event.event_type,
                     payload=event.render_payload,
-                    ts=event.created_at.isoformat() if event.created_at else None,
                 )
                 last_seq = int(event.seq)
 
@@ -560,6 +555,8 @@ class ChatService(BaseDbService[Chat]):
     async def _get_active_stream_targets(
         self, chat_id: UUID
     ) -> tuple[UUID | None, UUID | None]:
+        # Look up the in-progress assistant message so create_event_stream has
+        # real IDs for error reporting if the stream fails unexpectedly.
         latest_assistant_message = (
             await self.message_service.get_latest_assistant_message(chat_id)
         )
@@ -569,15 +566,18 @@ class ChatService(BaseDbService[Chat]):
             == MessageStreamStatus.IN_PROGRESS
         ):
             return (
-                latest_assistant_message.active_stream_id,
                 latest_assistant_message.id,
+                latest_assistant_message.active_stream_id,
             )
         return None, None
 
     async def create_event_stream(
         self, chat_id: UUID, after_seq: int
     ) -> AsyncIterator[dict[str, Any]]:
-        active_stream_id, active_message_id = await self._get_active_stream_targets(
+        # Entry point for the SSE connection: replays missed events from the DB,
+        # then switches to live Redis pub/sub. If anything fails, yields an error
+        # event so the client always gets feedback instead of hanging.
+        active_message_id, active_stream_id = await self._get_active_stream_targets(
             chat_id
         )
         last_seq = after_seq
@@ -589,9 +589,6 @@ class ChatService(BaseDbService[Chat]):
                     async for item in self._replay_stream_backlog(chat_id, after_seq):
                         yield item
                         last_seq = int(item["id"])
-                        envelope = json.loads(item["data"])
-                        if envelope.get("kind") in TERMINAL_STREAM_EVENT_TYPES:
-                            return
 
                     async for event in self._stream_live_redis_events(
                         chat_id,
@@ -602,9 +599,6 @@ class ChatService(BaseDbService[Chat]):
                         event_seq = int(event["id"])
                         if event_seq > last_seq:
                             last_seq = event_seq
-                        envelope = json.loads(event["data"])
-                        if envelope.get("kind") in TERMINAL_STREAM_EVENT_TYPES:
-                            return
 
         except Exception as exc:
             logger.error(
@@ -623,21 +617,23 @@ class ChatService(BaseDbService[Chat]):
         request: ChatRequest,
         current_user: User,
     ) -> ChatCompletionResult:
-        if not request.chat_id:
+        # Main entry point for a user sending a message: validates keys, saves
+        # the user message and an empty assistant message, uploads any attached
+        # files to the sandbox, then kicks off the background stream task.
+        # Returns the IDs the frontend needs to connect to the SSE stream.
+        user_settings = await self._user_service.get_user_settings(current_user.id)
+        try:
+            validate_model_api_keys(user_settings, request.model_id)
+        except APIKeyValidationError as e:
             raise ChatException(
-                "chat_id is required for chat completion",
-                error_code=ErrorCode.VALIDATION_ERROR,
-                status_code=400,
-            )
-
-        user_settings = await self.user_service.get_user_settings(current_user.id)
-        self._validate_api_keys(user_settings, request.model_id)
+                str(e), error_code=ErrorCode.API_KEY_MISSING, status_code=400
+            ) from e
 
         chat = await self.get_chat(request.chat_id, current_user)
 
         chat_id = chat.id
 
-        ws_sandbox = self._sandbox_for_workspace(chat.workspace)
+        ws_sandbox = self.sandbox_for_workspace(chat.workspace)
 
         attachments: list[MessageAttachmentDict] | None = None
         if request.attached_files:
@@ -658,14 +654,13 @@ class ChatService(BaseDbService[Chat]):
         session_id = chat.session_id
         if session_id and chat.workspace.sandbox_id:
             if await self._needs_session_cleaning(
-                chat.id, request.model_id, current_user.id
+                chat.id, request.model_id, user_settings
             ):
                 await ws_sandbox.clean_session_thinking_blocks(
                     chat.workspace.sandbox_id, session_id
                 )
 
-        user_prompt = self._extract_user_prompt(request.prompt)
-        ai_prompt = user_prompt
+        user_prompt = MessageService.extract_user_text_content(request.prompt)
 
         await self.message_service.create_message(
             chat_id,
@@ -674,7 +669,13 @@ class ChatService(BaseDbService[Chat]):
             attachments=attachments,
         )
 
-        assistant_message = await self._create_assistant_message(chat, request.model_id)
+        assistant_message = await self.message_service.create_message(
+            chat.id,
+            "",
+            MessageRole.ASSISTANT,
+            model_id=request.model_id,
+            stream_status=MessageStreamStatus.IN_PROGRESS,
+        )
 
         system_prompt = build_system_prompt_for_chat(
             chat.workspace.sandbox_id,
@@ -688,7 +689,7 @@ class ChatService(BaseDbService[Chat]):
 
         try:
             await self._enqueue_chat_task(
-                prompt=ai_prompt,
+                prompt=user_prompt,
                 system_prompt=system_prompt,
                 custom_instructions=custom_instructions,
                 chat=chat,
@@ -714,6 +715,9 @@ class ChatService(BaseDbService[Chat]):
     async def restore_to_checkpoint(
         self, chat_id: UUID, message_id: UUID, current_user: User
     ) -> None:
+        # Roll back a chat to a previous state: restore the sandbox filesystem
+        # from the checkpoint, delete all messages after the target, and reset
+        # the session_id so the next completion resumes from that point.
         chat = await self.get_chat(chat_id, current_user)
         sandbox_id = chat.workspace.sandbox_id
 
@@ -730,7 +734,7 @@ class ChatService(BaseDbService[Chat]):
                 )
 
             if sandbox_id and message.checkpoint_id:
-                ws_sandbox = self._sandbox_for_workspace(chat.workspace)
+                ws_sandbox = self.sandbox_for_workspace(chat.workspace)
                 await ws_sandbox.restore_checkpoint(sandbox_id, str(message.id))
 
             await self.message_service.delete_messages_after(chat_id, message)
@@ -746,8 +750,18 @@ class ChatService(BaseDbService[Chat]):
     async def fork_chat(
         self, source_chat_id: UUID, message_id: UUID, user: User
     ) -> tuple[Chat, int]:
+        # Create an independent copy of a chat at a specific message: clones the
+        # sandbox container from the checkpoint, duplicates the workspace/chat/
+        # messages/attachments in a single transaction, and cleans up on failure.
         source_chat = await self.get_chat(source_chat_id, user)
         source_workspace = source_chat.workspace
+
+        if source_workspace.sandbox_provider != SandboxProviderType.DOCKER.value:
+            raise ChatException(
+                "Fork is only supported with Docker sandbox provider",
+                error_code=ErrorCode.VALIDATION_ERROR,
+                status_code=400,
+            )
 
         if not source_workspace.sandbox_id:
             raise ChatException(
@@ -768,14 +782,7 @@ class ChatService(BaseDbService[Chat]):
 
         target_message = messages[-1]
 
-        if source_workspace.sandbox_provider != SandboxProviderType.DOCKER.value:
-            raise ChatException(
-                "Fork is only supported with Docker sandbox provider",
-                error_code=ErrorCode.VALIDATION_ERROR,
-                status_code=400,
-            )
-
-        user_settings = await self.user_service.get_user_settings(user.id)
+        user_settings = await self._user_service.get_user_settings(user.id)
 
         provider = LocalDockerProvider(
             config=SandboxProviderFactory.create_docker_config()
@@ -882,36 +889,10 @@ class ChatService(BaseDbService[Chat]):
         finally:
             await provider.cleanup()
 
-    async def _verify_chat_access(self, chat_id: UUID, user_id: UUID) -> bool:
-        async with self.session_factory() as db:
-            query = select(
-                exists().where(
-                    Chat.id == chat_id,
-                    Chat.user_id == user_id,
-                    Chat.deleted_at.is_(None),
-                )
-            )
-            result = await db.execute(query)
-            return bool(result.scalar())
-
-    def _validate_api_keys(self, user_settings: UserSettings, model_id: str) -> None:
-        try:
-            validate_model_api_keys(user_settings, model_id)
-        except APIKeyValidationError as e:
-            raise ChatException(
-                str(e), error_code=ErrorCode.API_KEY_MISSING, status_code=400
-            ) from e
-
-    async def _create_assistant_message(self, chat: Chat, model_id: str) -> Message:
-        return await self.message_service.create_message(
-            chat.id,
-            "",
-            MessageRole.ASSISTANT,
-            model_id=model_id,
-            stream_status=MessageStreamStatus.IN_PROGRESS,
-        )
-
     async def _enqueue_chat_task(
+        # Package the chat state into a ChatStreamRequest and kick off the
+        # background streaming task. Separate method so tests can override it
+        # to run synchronously without the background task machinery.
         self,
         *,
         prompt: str,
@@ -954,19 +935,12 @@ class ChatService(BaseDbService[Chat]):
         )
         ChatStreamRuntime.start_background_chat(request=request)
 
-    @staticmethod
-    def _extract_user_prompt(message_content: str | None) -> str:
-        if not message_content:
-            return ""
-        return MessageService.extract_user_text_content(message_content)
-
     async def _needs_session_cleaning(
-        self, chat_id: UUID, new_model_id: str, user_id: UUID
+        self, chat_id: UUID, new_model_id: str, user_settings: UserSettings
     ) -> bool:
-        user_settings = await self.user_service.get_user_settings(user_id)
-        if not user_settings:
-            return False
-
+        # When switching from a non-Anthropic provider to Anthropic, the session
+        # file may contain thinking blocks that Anthropic's API rejects — this
+        # detects that transition so the caller can strip them before resuming.
         new_provider, _ = self._provider_service.get_provider_for_model(
             user_settings, new_model_id
         )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Literal, TypedDict
 from uuid import UUID
@@ -125,7 +124,6 @@ class StreamEnvelope:
             "seq": seq,
             "kind": kind,
             "payload": payload or {},
-            "ts": datetime.now(timezone.utc).isoformat(),
         }
 
     @staticmethod

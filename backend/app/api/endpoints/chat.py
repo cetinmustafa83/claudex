@@ -515,7 +515,7 @@ async def queue_message(
     attachments: list[MessageAttachmentDict] | None = None
     files = attached_files or []
     if files:
-        ws_sandbox = ChatService._sandbox_for_workspace(chat.workspace)
+        ws_sandbox = ChatService.sandbox_for_workspace(chat.workspace)
         file_storage = StorageService(ws_sandbox)
         attachments = list(
             await asyncio.gather(

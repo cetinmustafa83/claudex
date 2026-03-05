@@ -52,7 +52,6 @@ from app.services.chat import ChatService
 from app.services.sandbox import SandboxService
 from app.services.sandbox_providers.docker_provider import LocalDockerProvider
 from app.services.sandbox_providers.types import DockerConfig
-from app.services.storage import StorageService
 from app.services.streaming.runtime import ChatStreamRuntime
 from app.services.streaming.types import ChatStreamRequest
 from app.services.user import UserService
@@ -294,13 +293,14 @@ def create_e2e_application(
         return UserService(session_factory=session_factory)
 
     async def override_get_chat_service():
-        storage_service = StorageService(sandbox_service)
         user_service = UserService(session_factory=session_factory)
+        extra = {}
+        if chat_service_cls is not ChatService:
+            extra["sandbox_service"] = sandbox_service
         yield chat_service_cls(
-            storage_service,
-            sandbox_service,
             user_service,
             session_factory=session_factory,
+            **extra,
         )
 
     def override_get_provider_service():
@@ -322,14 +322,11 @@ def create_e2e_application(
 class TestChatService(ChatService):
     def __init__(
         self,
-        storage_service,
-        sandbox_service,
         user_service,
         session_factory=None,
+        sandbox_service=None,
     ):
-        super().__init__(
-            storage_service, sandbox_service, user_service, session_factory
-        )
+        super().__init__(user_service, session_factory)
         self._test_sandbox_service = sandbox_service
         self._test_session_factory = session_factory
 

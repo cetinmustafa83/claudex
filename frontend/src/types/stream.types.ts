@@ -24,7 +24,6 @@ export interface StreamEnvelope {
   seq: number;
   kind: StreamKind;
   payload: Record<string, unknown>;
-  ts?: string | null;
 }
 
 export interface QueueProcessingData {
