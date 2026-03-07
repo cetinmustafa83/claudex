@@ -86,14 +86,11 @@ export const useSlashCommandSuggestions = ({
     return { isActive: false, query: '' } as const;
   }, [message]);
 
-  let filteredCommands = allCommands;
-  if (!isActive) {
-    filteredCommands = [];
-  } else if (query) {
-    filteredCommands = allCommands.filter((command) =>
-      command.value.slice(1).toLowerCase().startsWith(query),
-    );
-  }
+  const filteredCommands = useMemo(() => {
+    if (!isActive) return [];
+    if (!query) return allCommands;
+    return allCommands.filter((command) => command.value.slice(1).toLowerCase().startsWith(query));
+  }, [isActive, query, allCommands]);
 
   const hasSuggestions = filteredCommands.length > 0;
 

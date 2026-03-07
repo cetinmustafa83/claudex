@@ -26,7 +26,7 @@ export const extractPromptMention = (message: string): ExtractedPromptMention =>
     return { promptName: null, cleanedMessage: message };
   }
 
-  const promptName = match[1];
+  const promptName = decodeURIComponent(match[1]);
   const cleanedMessage = message.replace(match[0], '').trim();
 
   return { promptName, cleanedMessage };

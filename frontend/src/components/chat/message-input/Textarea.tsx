@@ -100,9 +100,14 @@ export function Textarea({
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       setMessage(e.target.value);
-      debouncedCursorChange(e.target.selectionStart);
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      const position = e.target.selectionStart;
+      lastCursorPositionRef.current = position;
+      onCursorPositionChange?.(position);
     },
-    [setMessage, debouncedCursorChange],
+    [setMessage, onCursorPositionChange],
   );
 
   return (
