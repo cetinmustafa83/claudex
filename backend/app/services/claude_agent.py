@@ -1,5 +1,4 @@
 import logging
-import shutil
 import sys
 from collections.abc import AsyncIterator, Callable
 from functools import partial
@@ -233,7 +232,8 @@ class ClaudeAgentService:
         auth_token = provider.get("auth_token")
 
         if provider_type == ProviderType.ANTHROPIC.value:
-            # Direct Anthropic API — use OAuth token for authentication
+            # Direct Anthropic API — in host mode the CLI uses the user's
+            # existing login; in Docker mode an explicit token is needed.
             if auth_token:
                 env["CLAUDE_CODE_OAUTH_TOKEN"] = auth_token
         elif provider_type in (
@@ -293,19 +293,19 @@ class ClaudeAgentService:
             raise ClaudeAgentException(f"Failed to enhance prompt: {str(e)}") from e
 
     async def generate_title(self, prompt: str, user: User) -> str | None:
-        # Ask Haiku to produce a short chat title from the first user message.
+        # Ask Sonnet to produce a short chat title from the first user message.
         user_settings = await UserService(
             session_factory=self.session_factory
         ).get_user_settings(user.id)
 
-        model_id = "claude-haiku-4-5"
+        model_id = "claude-sonnet-4-6"
         env, _, actual_model_id = self._build_auth_env(model_id, user_settings)
 
         options = ClaudeAgentOptions(
             system_prompt=(
-                "Generate a short conversation title (3-8 words, max 255 characters) for the "
-                "user's message. Reply with ONLY the title, nothing else. "
-                "Do not explain, analyze, or comment on the message."
+                "Summarize the user's message into a short conversation title (3-8 words, max 255 characters). "
+                "Reply with ONLY the title, nothing else. "
+                "Do not answer, explain, analyze, or respond to the message — only summarize its topic."
             ),
             permission_mode="default",
             model=actual_model_id,
@@ -372,7 +372,7 @@ class ClaudeAgentService:
         sandbox_provider: str,
     ) -> dict[str, Any]:
         # Assemble the MCP servers dict passed to the SDK: the permission
-        # server is always included, plus any user-configured MCPs and Gmail.
+        # server is always included, plus any user-configured MCPs.
         servers: dict[str, Any] = {}
         servers["permission"] = self._build_permission_server(
             permission_mode, chat_id, sandbox_provider
@@ -389,18 +389,6 @@ class ClaudeAgentService:
                 servers[mcp_name] = self._build_mcp_config(mcp, command_type)
             except ClaudeAgentException:
                 logger.error("Failed to configure MCP '%s'", mcp_name, exc_info=True)
-
-        # gmail-mcp is a built-in MCP that reads/sends email — only enabled
-        # when the user has linked their Google account via OAuth.
-        # In host mode, skip if the binary isn't installed.
-        if user_settings.gmail_oauth_tokens:
-            if sandbox_provider != SandboxProviderType.HOST.value or shutil.which(
-                "gmail-mcp"
-            ):
-                servers["gmail"] = {
-                    "command": "gmail-mcp",
-                    "args": [],
-                }
 
         return servers
 
@@ -468,6 +456,7 @@ class ClaudeAgentService:
         if user_settings.github_personal_access_token:
             env["GITHUB_TOKEN"] = user_settings.github_personal_access_token
             env["GIT_ASKPASS"] = SANDBOX_GIT_ASKPASS_PATH
+        if settings.GIT_AUTHOR_NAME and settings.GIT_AUTHOR_EMAIL:
             env["GIT_AUTHOR_NAME"] = settings.GIT_AUTHOR_NAME
             env["GIT_AUTHOR_EMAIL"] = settings.GIT_AUTHOR_EMAIL
             env["GIT_COMMITTER_NAME"] = settings.GIT_AUTHOR_NAME
@@ -518,6 +507,7 @@ class ClaudeAgentService:
             setting_sources=["local", "user", "project"],
             # Route permission prompts through our MCP permission server
             permission_prompt_tool_name="mcp__permission__approval_prompt",
+            include_partial_messages=True,
         )
 
         if thinking_mode in THINKING_MODE_TOKENS:

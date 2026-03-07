@@ -31,6 +31,7 @@ from app.constants import (
     TERMINAL_TYPE,
     VNC_WEBSOCKET_PORT,
 )
+from app.core.config import get_settings
 from app.services.exceptions import SandboxException
 from app.services.sandbox_providers.base import SandboxProvider
 from app.services.sandbox_providers.types import (
@@ -44,6 +45,7 @@ from app.services.sandbox_providers.types import (
 )
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 HOST_ALLOWED_PREVIEW_PORTS: set[int] = (
     set(DOCKER_AVAILABLE_PORTS) - EXCLUDED_PREVIEW_PORTS
@@ -100,6 +102,11 @@ class LocalHostProvider(SandboxProvider):
         bash_profile = home_dir / ".bash_profile"
         if not bash_profile.exists():
             bash_profile.write_text("[ -f ~/.bashrc ] && source ~/.bashrc\n")
+        # Symlink .config so CLI tools (gws, etc.) find host credentials despite HOME override
+        real_config = Path.home() / ".config"
+        sandbox_config = home_dir / ".config"
+        if real_config.is_dir() and not sandbox_config.exists():
+            sandbox_config.symlink_to(real_config)
 
     def bind_workspace(self, sandbox_id: str, workspace_path: str) -> None:
         home_dir = (self._base_dir / sandbox_id).resolve()
@@ -283,11 +290,13 @@ class LocalHostProvider(SandboxProvider):
         process_env = os.environ.copy()
         if envs:
             process_env.update(envs)
-        process_env["HOST_HOME"] = os.environ.get("HOME", "")
-        process_env["HOME"] = home_dir_str
-        process_env["USER"] = "user"
-        process_env["HOSTNAME"] = sandbox_id
+        # Web mode: override HOME so tools (Codex) find auth files in the sandbox dir.
+        # Desktop mode: keep real HOME so Claude Code finds its existing login credentials.
+        if not settings.DESKTOP_MODE:
+            process_env["HOME"] = home_dir_str
         process_env["TERM"] = process_env.get("TERM", TERMINAL_TYPE)
+        process_env["GIT_CONFIG_GLOBAL"] = settings.GIT_CONFIG_GLOBAL
+        process_env["GNUPGHOME"] = settings.GNUPGHOME
 
         if background:
             await asyncio.to_thread(
@@ -501,11 +510,14 @@ class LocalHostProvider(SandboxProvider):
         self._resize_fd(slave_fd, rows, cols)
 
         env = os.environ.copy()
-        env["HOME"] = str(home_dir)
-        env["USER"] = "user"
-        env["HOSTNAME"] = sandbox_id
+        # Web mode: override HOME so terminal sessions see the sandbox home.
+        # Desktop mode: keep real HOME so CLI tools find existing credentials.
+        if not settings.DESKTOP_MODE:
+            env["HOME"] = str(home_dir)
         env["SHELL"] = "/bin/bash"
         env["TERM"] = TERMINAL_TYPE
+        env["GIT_CONFIG_GLOBAL"] = settings.GIT_CONFIG_GLOBAL
+        env["GNUPGHOME"] = settings.GNUPGHOME
 
         cmd = (
             f"export PATH={HOST_REQUIRED_PATH_PREFIX}:$PATH; "

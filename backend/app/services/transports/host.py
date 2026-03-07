@@ -104,10 +104,14 @@ class HostSandboxTransport(BaseSandboxTransport):
         env = {
             **os.environ,
             **envs,
-            "HOME": str(self._home_dir),
-            "USER": requested_user,
             "PATH": f"{HOST_REQUIRED_PATH_PREFIX}:{current_path}",
         }
+        # Web mode: override HOME so tools (Codex) find auth files in the sandbox dir.
+        # Desktop mode: keep real HOME so Claude Code finds its existing login credentials.
+        if not settings.DESKTOP_MODE:
+            env["HOME"] = str(self._home_dir)
+        env["GIT_CONFIG_GLOBAL"] = settings.GIT_CONFIG_GLOBAL
+        env["GNUPGHOME"] = settings.GNUPGHOME
         run_user = self._resolve_run_user(requested_user)
 
         try:

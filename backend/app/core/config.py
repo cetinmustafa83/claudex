@@ -160,8 +160,13 @@ class Settings(BaseSettings):
     CONTEXT_WINDOW_TOKENS: int = 200_000
 
     # Git configuration
-    GIT_AUTHOR_NAME: str = "Claudex"
-    GIT_AUTHOR_EMAIL: str = "noreply@claudex.pro"
+    GIT_AUTHOR_NAME: str = ""
+    GIT_AUTHOR_EMAIL: str = ""
+    # Resolved once at startup so host-provider subprocesses (which override
+    # HOME to the sandbox dir) still read the real user's global git config
+    # and GPG keyring for commit signing.
+    GIT_CONFIG_GLOBAL: str = str(Path.home() / ".gitconfig")
+    GNUPGHOME: str = str(Path.home() / ".gnupg")
 
     # Docker Sandbox configuration
     DOCKER_IMAGE: str = "ghcr.io/mng-dev-ai/claudex-sandbox:latest"
