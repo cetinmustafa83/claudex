@@ -8,6 +8,7 @@ import { Textarea } from './Textarea';
 import { InputControls } from './InputControls';
 import { InputAttachments } from './InputAttachments';
 import { InputSuggestionsPanel } from './InputSuggestionsPanel';
+import { MentionChips } from './MentionChips';
 import { ContextUsageIndicator } from './ContextUsageIndicator';
 import { InputProvider } from './InputProvider';
 import { useInputContext } from '@/hooks/useInputContext';
@@ -78,6 +79,8 @@ function InputLayout() {
             <ContextUsageIndicator usage={state.contextUsage} />
           </div>
         )}
+
+        <MentionChips mentions={state.activeMentions} onRemove={actions.removeMention} />
 
         <div className="relative px-3 pb-12 pt-1.5 sm:pb-9">
           <Textarea

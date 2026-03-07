@@ -111,6 +111,17 @@ export function useChatStreaming({
   const { inputMessage, setInputMessage, inputFiles, setInputFiles, clearInput } = useInputState({
     chatId,
   });
+  const inputMessageRef = useRef(inputMessage);
+  inputMessageRef.current = inputMessage;
+
+  const setInputMessageWithRef = useCallback(
+    (value: SetStateAction<string>) => {
+      const next = typeof value === 'function' ? value(inputMessageRef.current) : value;
+      inputMessageRef.current = next;
+      setInputMessage(next);
+    },
+    [setInputMessage],
+  );
   const { copiedMessageId, handleCopy } = useClipboard({ chatId });
 
   const {
@@ -305,12 +316,12 @@ export function useChatStreaming({
   const handleMessageSend = useCallback(
     async (event: FormEvent) => {
       event.preventDefault();
-      const result = await handleMessageSendAction(inputMessage, inputFiles);
+      const result = await handleMessageSendAction(inputMessageRef.current, inputFiles);
       if (result?.success) {
         clearInput();
       }
     },
-    [handleMessageSendAction, inputMessage, inputFiles, clearInput],
+    [handleMessageSendAction, inputFiles, clearInput],
   );
 
   return {
@@ -318,7 +329,7 @@ export function useChatStreaming({
     setMessages,
     pendingUserMessageId,
     inputMessage,
-    setInputMessage,
+    setInputMessage: setInputMessageWithRef,
     inputFiles,
     setInputFiles,
     copiedMessageId,

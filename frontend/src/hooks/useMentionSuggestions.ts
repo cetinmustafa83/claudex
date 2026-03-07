@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useMemo } from 'react';
+import { useCallback, useDeferredValue, useMemo, useRef } from 'react';
 import type { FileStructure } from '@/types/file-system.types';
 import type { CustomAgent, CustomPrompt } from '@/types/user.types';
 import type { MentionItem } from '@/types/ui.types';
@@ -33,7 +33,7 @@ const convertAgentsToMentions = (agents: CustomAgent[]): MentionItem[] => {
   return agents.map((agent) => ({
     type: 'agent' as const,
     name: agent.name,
-    path: `agent:${agent.name}`,
+    path: `agent:${encodeURIComponent(agent.name)}`,
     description: agent.description,
   }));
 };
@@ -42,7 +42,7 @@ const convertPromptsToMentions = (prompts: CustomPrompt[]): MentionItem[] => {
   return prompts.map((prompt) => ({
     type: 'prompt' as const,
     name: prompt.name,
-    path: `prompt:${prompt.name}`,
+    path: `prompt:${encodeURIComponent(prompt.name)}`,
   }));
 };
 
@@ -81,18 +81,23 @@ export const useMentionSuggestions = ({
       filteredFiles: files,
       filteredAgents: agents,
       filteredPrompts: prompts,
-      allSuggestions: [...files, ...agents, ...prompts],
+      allSuggestions: [...agents, ...prompts, ...files],
     };
   }, [isActive, deferredQuery, allFiles, allAgents, allPrompts]);
 
   const hasSuggestions = allSuggestions.length > 0;
 
+  const mentionStartPosRef = useRef(mentionStartPos);
+  mentionStartPosRef.current = mentionStartPos;
+  const mentionEndPosRef = useRef(mentionEndPos);
+  mentionEndPosRef.current = mentionEndPos;
+
   const handleSelect = useCallback(
     (item: MentionItem) => {
-      if (mentionStartPos === -1) return;
-      onSelect(item, mentionStartPos, mentionEndPos);
+      if (mentionStartPosRef.current === -1) return;
+      onSelect(item, mentionStartPosRef.current, mentionEndPosRef.current);
     },
-    [onSelect, mentionStartPos, mentionEndPos],
+    [onSelect],
   );
 
   const { highlightedIndex, selectItem, handleKeyDown } = useSuggestionBase({

@@ -48,8 +48,19 @@ export function InputProvider({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [previewDismissed, setPreviewDismissed] = useState(false);
   const [cursorPosition, setCursorPosition] = useState(0);
+  const [activeMentions, setActiveMentions] = useState<MentionItem[]>([]);
+  const messageRef = useRef(message);
+  messageRef.current = message;
+  const activeMentionsRef = useRef(activeMentions);
+  activeMentionsRef.current = activeMentions;
 
-  const hasMessage = message.trim().length > 0;
+  const prevChatId = useRef(chatId);
+  if (prevChatId.current !== chatId) {
+    prevChatId.current = chatId;
+    if (activeMentions.length > 0) setActiveMentions([]);
+  }
+
+  const hasMessage = message.trim().length > 0 || activeMentions.length > 0;
   const hasAttachments = (attachedFiles?.length ?? 0) > 0;
 
   const prevHasAttachments = useRef(hasAttachments);
@@ -129,22 +140,29 @@ export function InputProvider({
 
   const handleMentionSelect = useCallback(
     (item: MentionItem, mentionStartPos: number, mentionEndPos: number) => {
-      const beforeMention = message.slice(0, mentionStartPos);
-      const afterMention = message.slice(mentionEndPos);
-      const newMessage = `${beforeMention}@${item.path} ${afterMention}`;
-      const newCursorPos = mentionStartPos + item.path.length + 2;
+      const msg = messageRef.current;
+      const beforeMention = msg.slice(0, mentionStartPos);
+      const afterMention = msg.slice(mentionEndPos);
+      const newMessage = `${beforeMention}${afterMention}`;
 
+      setActiveMentions((prev) =>
+        prev.some((m) => m.path === item.path) ? prev : [...prev, item],
+      );
       setMessage(newMessage);
 
       setTimeout(() => {
         if (textareaRef.current) {
-          textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
-          setCursorPosition(newCursorPos);
+          textareaRef.current.setSelectionRange(mentionStartPos, mentionStartPos);
+          setCursorPosition(mentionStartPos);
         }
       }, 0);
     },
-    [message, setMessage],
+    [setMessage],
   );
+
+  const removeMention = useCallback((path: string) => {
+    setActiveMentions((prev) => prev.filter((m) => m.path !== path));
+  }, []);
 
   const {
     filteredFiles,
@@ -163,16 +181,25 @@ export function InputProvider({
     onSelect: handleMentionSelect,
   });
 
+  const buildMessageWithMentions = useCallback((text: string) => {
+    const mentions = activeMentionsRef.current;
+    if (mentions.length === 0) return text;
+    const mentionPrefix = mentions.map((m) => `@${m.path}`).join(' ');
+    return text.trim() ? `${mentionPrefix} ${text}` : mentionPrefix;
+  }, []);
+
   const handleSubmit = useCallback(
     (event: React.FormEvent) => {
       event.preventDefault();
       if (disabled) return;
       if (!hasMessage) return;
 
+      setMessage(buildMessageWithMentions(messageRef.current));
+      setActiveMentions([]);
       setPreviewDismissed(true);
       onSubmit(event);
     },
-    [disabled, hasMessage, onSubmit],
+    [disabled, hasMessage, onSubmit, setMessage, buildMessageWithMentions],
   );
 
   const submitOrStop = useCallback(() => {
@@ -185,17 +212,19 @@ export function InputProvider({
 
     if (isStreaming && hasMessage && chatId) {
       const { permissionMode, thinkingMode } = useUIStore.getState();
+      const fullMessage = buildMessageWithMentions(messageRef.current).trim();
       void useMessageQueueStore
         .getState()
         .queueMessage(
           chatId,
-          message.trim(),
+          fullMessage,
           selectedModelId,
           permissionMode,
           thinkingMode,
           attachedFiles ?? undefined,
         );
       setMessage('');
+      setActiveMentions([]);
       clearAttachedFiles?.([]);
       setPreviewDismissed(true);
       return;
@@ -229,11 +258,11 @@ export function InputProvider({
     onStopStream,
     onSubmit,
     chatId,
-    message,
     attachedFiles,
     setMessage,
     clearAttachedFiles,
     selectedModelId,
+    buildMessageWithMentions,
   ]);
 
   const handleKeyDown = useCallback(
@@ -262,8 +291,8 @@ export function InputProvider({
 
   const handleEnhancePrompt = useCallback(() => {
     if (!hasMessage || isEnhancing) return;
-    enhancePromptMutation.mutate({ prompt: message.trim(), modelId: selectedModelId });
-  }, [hasMessage, isEnhancing, message, selectedModelId, enhancePromptMutation]);
+    enhancePromptMutation.mutate({ prompt: messageRef.current.trim(), modelId: selectedModelId });
+  }, [hasMessage, isEnhancing, selectedModelId, enhancePromptMutation]);
 
   const dynamicPlaceholder = isStreaming ? 'Type to queue message\u2026' : placeholder;
 
@@ -292,6 +321,7 @@ export function InputProvider({
       editingImageIndex,
       contextUsage,
       chatId,
+      activeMentions,
       isMentionActive,
       slashCommandSuggestions,
       highlightedSlashCommandIndex,
@@ -324,6 +354,7 @@ export function InputProvider({
       editingImageIndex,
       contextUsage,
       chatId,
+      activeMentions,
       isMentionActive,
       slashCommandSuggestions,
       highlightedSlashCommandIndex,
@@ -353,6 +384,7 @@ export function InputProvider({
       resetDragState,
       selectSlashCommand,
       selectMention,
+      removeMention,
     }),
     [
       setMessage,
@@ -372,6 +404,7 @@ export function InputProvider({
       resetDragState,
       selectSlashCommand,
       selectMention,
+      removeMention,
     ],
   );
 
